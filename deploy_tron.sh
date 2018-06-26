@@ -6,6 +6,8 @@ BRANCH="master"
 DB="keep"
 RPC_PORT=50051
 
+
+
 while [ -n "$1" ] ;do
     case "$1" in
         --net)
@@ -34,6 +36,7 @@ while [ -n "$1" ] ;do
         --rpc-port)
             RPC_PORT=$2
             shift 2
+            ;;
         *)
             ;;
     esac
