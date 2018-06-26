@@ -72,7 +72,7 @@ elif [ $NET == "testnet" ]; then
 fi
 
 if [ -n $RPC_PORT ]; then
-  sed -i "s/port = 50051/needSyncCheck = $RPC_PORT/g" $CONF_PATH
+  sed -i "s/port = 50051/port = $RPC_PORT/g" $CONF_PATH
 fi 
 # checkout branch or commitid
 if [ -n  "$BRANCH" ]; then
