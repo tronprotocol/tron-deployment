@@ -4,6 +4,7 @@ WORK_SPACE=$PWD
 NET="mainnet"
 BRANCH="master"
 DB="keep"
+RPC_PORT=50051
 
 while [ -n "$1" ] ;do
     case "$1" in
@@ -30,6 +31,9 @@ while [ -n "$1" ] ;do
             TRUST_NODE=$2
             shift 2
             ;;
+        --rpc-port)
+            RPC_PORT=$2
+            shift 2
         *)
             ;;
     esac
@@ -56,13 +60,17 @@ fi
 
 cd $BIN_PATH
 if [ $NET == "mainnet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/main_net_config.conf
-  CONF_PATH=main_net_config.conf
+  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/main_net_config.conf -O main_net_config.conf
+  CONF_PATH=$BIN_PATH/main_net_config.conf
+  COMMITID="07236ce59d39f2e2d9e574e81e81d5cd682a08cb"
 elif [ $NET == "testnet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf
-  CONF_PATH=test_net_config.conf
+  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
+  CONF_PATH=$BIN_PATH/test_net_config.conf
 fi
 
+if [ -n $RPC_PORT ]; then
+  sed -i "s/port = 50051/needSyncCheck = $RPC_PORT/g" $CONF_PATH
+fi 
 # checkout branch or commitid
 if [ -n  "$BRANCH" ]; then
   cd $BIN_PATH/$PROJECT && git fetch && git checkout -t origin/$BRANCH;  git reset --hard origin/$BRANCH
@@ -75,7 +83,7 @@ fi
 if [ $DB == "remove" ]; then
   rm -rf $BIN_PATH/output-directory
 elif [ $DB == "backup" ]; then
-  tar -czf $BIN_PATH/output-directory-$GIT_COMMIT.tar.gz $BIN_PATH/output-directory
+  tar -czf $BIN_PATH/output-directory-$GIT_COMMIT-$NET.tar.gz $BIN_PATH/output-directory
   rm -rf $BIN_PATH/output-directory
 fi
 
@@ -103,9 +111,14 @@ cd $BIN_PATH
 nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  >> start.log 2>&1 &
 pid=`ps -ef |grep $JAR_NAME |grep -v grep |awk '{print $2}'`
 
+
 echo "start $APP with pid: $pid on $HOSTNAME"
 echo "process: nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
-echo "db  : $BIN_PATH/output-directory"
-echo "log : $BIN_PATH/logs"
-echo "work space : $WORK_SPACE"
-echo "deploy path: $BIN_PATH"
+echo "deploy path : $BIN_PATH"
+echo "database path : $BIN_PATH/output-directory"
+echo "log path : $BIN_PATH/logs"
+echo "grpc port : $RPC_PORT"
+if [ $APP == "SolidityNode" ]; then
+  echo "trust-node : $TRUST_NODE"
+fi
+
