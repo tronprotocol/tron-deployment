@@ -115,6 +115,8 @@ pid=`ps -ef |grep $JAR_NAME |grep -v grep |awk '{print $2}'`
 echo "start $APP with pid: $pid on $HOSTNAME"
 echo "process: nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
 echo "deploy path : $BIN_PATH"
+echo "git commit : "`git rev-parse HEAD`
+echo "git branch : $BRANCH"
 echo "database path : $BIN_PATH/output-directory"
 echo "log path : $BIN_PATH/logs"
 echo "grpc port : $RPC_PORT"
