@@ -9,7 +9,7 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 ## 启动参数说明
 
 ```shell
-sh start_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
+bash start_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
 
 --app	启动的应用，默认FullNode，可以是FullNode或者SolidityNode
 --net	连接的网络，默认mainnet，可以是mainnet或者testnet
@@ -28,7 +28,7 @@ sh start_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [kee
 
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
-sh deploy_tron.sh --app FullNode --net mainnet
+bash deploy_tron.sh --app FullNode --net mainnet
 ```
 
 ### 单独启动主网SolidityNode
@@ -36,14 +36,14 @@ sh deploy_tron.sh --app FullNode --net mainnet
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
 # 这里自己指定SolidityNode的trust-node的gRPC服务的ip和端口号
-sh deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-port>
+bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-port>
 ```
 
 ### 启动主网FullNode和SolidityNode在同一台机器
 
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
-sh deploy_tron.sh --app FullNode --net mainnet
+bash deploy_tron.sh --app FullNode --net mainnet
 # 由于FullNode和SolidityNode都需要对外提供gRPC服务
 # 所以在同一台机器安装SolidityNode需要配置不同的gRPC端口号
 # 不能是默认gRPC端口号50051，在此例中rpc端口设置为50041
