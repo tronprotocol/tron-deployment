@@ -6,6 +6,7 @@ NET="mainnet"
 BRANCH="master"
 DB="keep"
 RPC_PORT=50051
+TRUST_NODE="127.0.0.1:50051"
 
 
 
@@ -146,4 +147,3 @@ echo "grpc port : $RPC_PORT"
 if [ $APP == "SolidityNode" ]; then
   echo "trust-node : $TRUST_NODE"
 fi
-
