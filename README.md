@@ -1,4 +1,4 @@
-## 下载/更新启动脚本 download this script in time
+## download this script in time
 
 because we will update the script frequently, so you need to download the script file in time.
 
