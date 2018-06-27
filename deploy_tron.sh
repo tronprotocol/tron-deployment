@@ -1,3 +1,4 @@
+#!/bin/bash
 APP="FullNode"
 PROJECT="java-tron"
 WORK_SPACE=$PWD
@@ -107,10 +108,22 @@ elif [ $APP == "FullNode" ]; then
   START_OPT=""
 fi
 
-ps ax |grep $JAR_NAME | grep java |grep -v grep |awk '{print $1}' > APP.pid
-cat APP.pid | xargs kill -15
-sleep 2
-cat APP.pid | xargs kill -9
+count=1
+while [ $count -le 60 ]; do
+  pid=`ps -ef |grep  $JAR_NAME.jar | grep java | grep -v grep |awk '{print $2}'`
+  if [ -n "$pid" ]; then
+    kill -15 $pid
+    echo "kill -15 java-tron, counter $count"
+    sleep 1
+  else
+    echo "$APP killed"
+    break
+  fi
+  count=$[$count+1]
+  if [ $count -ge 60 ]; then
+    kill -9 $pid
+  fi
+done
 
 echo "starting $APP"
 cd $BIN_PATH
