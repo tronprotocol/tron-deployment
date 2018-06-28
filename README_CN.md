@@ -57,8 +57,8 @@ sh deploy_tron.sh --app SolidityNode --net mainnet --trust-node 127.0.0.1:50051 
 ### 概要
 本脚本用于部署https://github.com/tronprotocol/grpc-gateway 代码， 并部署gateway。
 ### 预安装
-请阅读https://github.com/tronprotocol/grpc-gateway 安装go，protoc，并依照个人需求设置好$GOPATH环境变量
-#下载与启动
+请阅读https://github.com/tronprotocol/grpc-gateway 并安装：go，protoc，请依照个人需求设置好$GOPATH环境变量
+### 下载与启动
 由于启动脚本可能会发生变化，请每次使用前都重新下载启动脚本
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_grpc_gateway.sh -O deploy_grpc_gateway.sh
