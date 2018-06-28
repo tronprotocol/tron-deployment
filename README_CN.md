@@ -49,3 +49,34 @@ bash deploy_tron.sh --app FullNode --net mainnet
 # 不能是默认gRPC端口号50051，在此例中rpc端口设置为50041
 sh deploy_tron.sh --app SolidityNode --net mainnet --trust-node 127.0.0.1:50051 --rpc-port 50041
 ```
+
+
+
+## grpc gateway 的部署安装
+
+### 概要
+本脚本用于部署https://github.com/tronprotocol/grpc-gateway 代码， 并部署gateway。
+### 预安装
+请阅读https://github.com/tronprotocol/grpc-gateway 安装go，protoc，并依照个人需求设置好$GOPATH环境变量
+#下载与启动
+由于启动脚本可能会发生变化，请每次使用前都重新下载启动脚本
+```shell
+wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_grpc_gateway.sh -O deploy_grpc_gateway.sh
+```
+### 参数说明
+```shell
+bash deploy_grpc_gateway.sh --rpchost [rpc host ip] --rpcport [rpc port number] --httpport [http port number] 
+
+--rpchost 启动grpc服务的fullnode或soliditynode的ip，默认为localhost
+--rpcport 启动grpc服务的fullnode或soliditynode的grpc端口号，默认为50051
+--httpport 开放http服务的端口，默认为18890
+```
+### Example
+使用默认配置：
+```shell
+bash deploy_grpc_gateway.sh
+```
+使用参数配置：
+```shell
+bash deploy_grpc_gateway.sh --rpchost 127.0.0.1 --rpcport 50052 --httpport 18891
+```
