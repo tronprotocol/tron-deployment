@@ -1,10 +1,10 @@
-# Download and run script
+## Download and run script
 
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
 ```
 
-# Parameter Illustration
+## Parameter Illustration
 
 ```shell
 bash start_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
