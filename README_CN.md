@@ -9,11 +9,11 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 ## 启动参数说明
 
 ```shell
-bash start_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
+bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
 
---app	启动的应用，默认FullNode，可以是FullNode或者SolidityNode
---net	连接的网络，默认mainnet，可以是mainnet或者testnet
---db	数据库处理方式，可以keep,remove,backup。如果两次启动不同的网络，需要删除数据库
+--app	      启动的应用，默认FullNode，可以是FullNode或者SolidityNode
+--net	      连接的网络，默认mainnet，可以是mainnet或者testnet
+--db	      数据库处理方式，可以keep,remove,backup。如果两次启动不同的网络，需要删除数据库
 --trust-node	只有在启动SolidityNode中生效，指定连接的FullNode的gRPC服务 .比如 127.0.0.1:50051 或者13.125.249.129:50051
 --rpc-port	grpc的端口号，如果在同一台机器上部署SolidityNode和FullNode，必须配置不同的端口号
 --commit	选填，项目commitid
