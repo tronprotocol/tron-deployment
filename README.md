@@ -7,7 +7,7 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 ## Parameter Illustration
 
 ```shell
-bash start_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
+bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
 
 --app	Running application. The default node is Fullnode and it could be FullNode or SolidityNode.
 --net	Connecting network. The default network is mainnet and it could be mainnet or testnet.
