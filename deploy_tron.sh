@@ -71,7 +71,6 @@ cd $BIN_PATH
 if [ $NET == "mainnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/main_net_config.conf -O main_net_config.conf
   CONF_PATH=$BIN_PATH/main_net_config.conf
-  COMMITID="07236ce59d39f2e2d9e574e81e81d5cd682a08cb"
 elif [ $NET == "testnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
   CONF_PATH=$BIN_PATH/test_net_config.conf
