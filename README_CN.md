@@ -38,6 +38,12 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 # 这里自己指定SolidityNode的trust-node的gRPC服务的ip和端口号
 bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-port>
 ```
+### 单独启动私有链FullNode（仅仅运行一个产块节点）
+
+```shell
+wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
+bash deploy_tron.sh --app FullNode --net privatenet
+```
 
 ### 启动主网FullNode和SolidityNode在同一台机器
 

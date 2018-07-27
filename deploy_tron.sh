@@ -74,6 +74,9 @@ if [ $NET == "mainnet" ]; then
 elif [ $NET == "testnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
   CONF_PATH=$BIN_PATH/test_net_config.conf
+elif [ $NET == "privatenet" ]; then
+  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/private_net_config.conf -O private_net_config.conf
+  CONF_PATH=$BIN_PATH/private_net_config.conf
 fi
 
 if [ -n $RPC_PORT ]; then
@@ -127,12 +130,21 @@ done
 
 echo "starting $APP"
 cd $BIN_PATH
-nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  >> start.log 2>&1 &
+if [ $NET == "mainnet" ]; then
+  nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  >> start.log 2>&1 &
+  echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
+elif [ $NET == "testnet" ]; then
+  nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  >> start.log 2>&1 &
+  echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
+elif [ $NET == "privatenet" ]; then
+  nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  --witness>> start.log 2>&1 &
+  echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH --witness >> start.log 2>&1 &"
+fi
+
 
 pid=`ps ax |grep $JAR_NAME.jar |grep -v grep | awk '{print $1}'`
 echo $pid
 
-echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
 echo "application : $APP"
 echo "pid : $pid"
 echo "tron net : $NET"

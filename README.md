@@ -7,10 +7,10 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 ## Parameter Illustration
 
 ```shell
-bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet] --db [keep|remove|backup] 
+bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet|privatenet] --db [keep|remove|backup] 
 
 --app	Running application. The default node is Fullnode and it could be FullNode or SolidityNode.
---net	Connecting network. The default network is mainnet and it could be mainnet or testnet.
+--net	Connecting network. The default network is mainnet and it could be mainnet, testnet, privatenet .
 --db	The way of data processing could be keep, remove and backup. If you launch two different networks, like from mainnet to testnet or from testnet to mainnet, you need to delete database. 
 --trust-node	It only works when deploying SolidityNode. The specified gRPC service of Fullnode, like 127.0.0.1:50051 or 13.125.249.129:50051.
 --rpc-port	Port of grp. If you deploy SolidityNode and FullNode on the same host，you need to configure different ports.
@@ -35,6 +35,12 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-port>
 ```
 
+### Deployment of FullNode(PrivateNet: Just one witness node) on the one host.
+
+```shell
+wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
+bash deploy_tron.sh --app FullNode --net privatenet
+```
 ### Deployment of FullNode and SolidityNode on the same host.
 
 ```shell
