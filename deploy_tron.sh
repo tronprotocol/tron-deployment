@@ -7,7 +7,7 @@ BRANCH="master"
 DB="keep"
 RPC_PORT=50051
 TRUST_NODE="127.0.0.1:50051"
-
+LISTEN_PORT=18888
 
 
 while [ -n "$1" ] ;do
@@ -42,6 +42,10 @@ while [ -n "$1" ] ;do
             ;;
         --rpc-port)
             RPC_PORT=$2
+            shift 2
+            ;;
+        --listen)
+            LISTEN_PORT=$2
             shift 2
             ;;
         *)
@@ -82,7 +86,12 @@ fi
 if [ -n $RPC_PORT ]; then
   sed "s/port = 50051/port = $RPC_PORT/g" $CONF_PATH > tmp
   cat tmp > $CONF_PATH
-fi 
+fi
+
+if [ -n $LISTEN_PORT ]; then
+  sed "s/listen.port = 18888/listen.port = $LISTEN_PORT/g" $CONF_PATH > tmp
+  cat tmp > $CONF_PATH
+fi
 # checkout branch or commitid
 if [ -n  "$BRANCH" ]; then
   cd $BIN_PATH/$PROJECT && git fetch && git checkout -t origin/$BRANCH;  git reset --hard origin/$BRANCH
