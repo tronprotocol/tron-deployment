@@ -73,6 +73,7 @@ if [ $NET == "mainnet" ]; then
   CONF_PATH=$BIN_PATH/main_net_config.conf
 elif [ $NET == "testnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
+  BRANCH="develop"
   CONF_PATH=$BIN_PATH/test_net_config.conf
 elif [ $NET == "privatenet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/private_net_config.conf -O private_net_config.conf
@@ -85,7 +86,7 @@ if [ -n $RPC_PORT ]; then
 fi 
 # checkout branch or commitid
 if [ -n  "$BRANCH" ]; then
-  cd $BIN_PATH/$PROJECT && git fetch && git checkout -t origin/$BRANCH;  git reset --hard origin/$BRANCH
+  cd $BIN_PATH/$PROJECT && git fetch && git checkout $BRANCH;  git reset --hard origin/$BRANCH
 fi
 
 if [ -n "$COMMITID" ]; then
