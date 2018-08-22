@@ -53,7 +53,7 @@ bash deploy_tron.sh --app FullNode --net mainnet
 # 由于FullNode和SolidityNode都需要对外提供gRPC服务
 # 所以在同一台机器安装SolidityNode需要配置不同的gRPC端口号
 # 不能是默认gRPC端口号50051，在此例中rpc端口设置为50041
-sh deploy_tron.sh --app SolidityNode --net mainnet --trust-node 127.0.0.1:50051 --rpc-port 50041
+bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node 127.0.0.1:50051 --rpc-port 50041
 ```
 
 
