@@ -39,7 +39,7 @@ bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-
 
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
-bash deploy_tron.sh --app FullNode --branch develop --net privatenet
+bash deploy_tron.sh --app FullNode --net privatenet
 ```
 ### Deployment of FullNode and SolidityNode on the same host.
 
