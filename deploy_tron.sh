@@ -120,6 +120,8 @@ if [ $APP == "SolidityNode" ]; then
   START_OPT="--trust-node $TRUST_NODE"
 elif [ $APP == "FullNode" ]; then
   START_OPT=""
+elif [[ $APP == "java-tron" ]]; then
+  START_OPT="--witness -p $witness"
 fi
 
 count=1
