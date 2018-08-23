@@ -8,7 +8,17 @@ DB="keep"
 RPC_PORT=50051
 TRUST_NODE="127.0.0.1:50051"
 
+if [ ! -f ticktick.sh ];then
+  wget https://raw.githubusercontent.com/kristopolous/TickTick/master/ticktick.sh -O ticktick.sh
+fi
 
+source ticktick.sh
+CODE_VERSION=`curl "https://api.github.com/repos/tronprotocol/java-tron/releases/latest"`
+tickParse "$CODE_VERSION"
+tag_name=``tag_name``
+rm ticktick.sh
+BRANCH=$tag_name
+echo current code branch $BRANCH
 
 while [ -n "$1" ] ;do
     case "$1" in
