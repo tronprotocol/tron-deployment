@@ -1,5 +1,5 @@
 #!/bin/bash
-APP="java-tron"
+APP="FullNode"
 PROJECT="java-tron"
 WORK_SPACE=$PWD
 NET="mainnet"
@@ -79,14 +79,14 @@ fi
 
 cd $BIN_PATH
 if [ $NET == "mainnet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/vm/main_net_config.conf -O main_net_config.conf
+  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/vmfull/main_net_config.conf -O main_net_config.conf
   CONF_PATH=$BIN_PATH/main_net_config.conf
 elif [ $NET == "testnet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/vm/test_net_config.conf -O test_net_config.conf
+  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/vmfull/test_net_config.conf -O test_net_config.conf
   BRANCH="develop"
   CONF_PATH=$BIN_PATH/test_net_config.conf
 elif [ $NET == "privatenet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/vm/private_net_config.conf -O private_net_config.conf
+  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/vmfull/private_net_config.conf -O private_net_config.conf
   CONF_PATH=$BIN_PATH/private_net_config.conf
 fi
 
