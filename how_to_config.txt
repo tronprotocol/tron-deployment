@@ -1,0 +1,8 @@
+### This document is used to explain the features of configuration items in the *.conf file and help you understand how to use them.
+
+# this item is used to config the level of log outputted to the file.
+# if "INFO" is set,then 'INFO;WARN;ERROR' log will be outputted to the file. if "ERROR" is set, then only ERROR log will be outputted to the file.
+# if this item is not been set, "INFO" will be the default level in the code.
+log.level = {
+   root = "INFO" // TRACE;DEBUG;INFO;WARN;ERROR
+}
