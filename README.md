@@ -7,9 +7,10 @@ wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy
 ## Parameter Illustration
 
 ```shell
-bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet|privatenet] --db [keep|remove|backup] 
+bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet|privatenet] --db [keep|remove|backup] --heap-size <heapsize>
 
 --app	Running application. The default node is Fullnode and it could be FullNode or SolidityNode.
+--heap-size jvm option: Xmx. The option *must* be set. 
 --net	Connecting network. The default network is mainnet and it could be mainnet, testnet, privatenet .
 --db	The way of data processing could be keep, remove and backup. If you launch two different networks, like from mainnet to testnet or from testnet to mainnet, you need to delete database. 
 --trust-node	It only works when deploying SolidityNode. The specified gRPC service of Fullnode, like 127.0.0.1:50051 or 13.125.249.129:50051.
@@ -24,7 +25,7 @@ bash deploy_tron.sh --app [FullNode|SolidityNode] --net [mainnet|testnet|private
 
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
-bash deploy_tron.sh --app FullNode --net mainnet
+bash deploy_tron.sh --app FullNode --net mainnet --heap-size 16384m
 ```
 
 ### Deployment of SolidityNode on the one host.
@@ -32,14 +33,14 @@ bash deploy_tron.sh --app FullNode --net mainnet
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
 # User can self-configure the IP and Port of GRPC service in the turst-node field of SolidityNode.
-bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-port>
+bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node <grpc-ip:grpc-port> --heap-size 16384m
 ```
 
 ### Deployment of FullNode(PrivateNet: Just one witness node) on the one host.
 
 ```shell
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
-bash deploy_tron.sh --app FullNode --branch develop --net privatenet
+bash deploy_tron.sh --app FullNode --branch develop --net privatenet --heap-size 16384m
 ```
 ### Deployment of FullNode and SolidityNode on the same host.
 
@@ -47,7 +48,7 @@ bash deploy_tron.sh --app FullNode --branch develop --net privatenet
 wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh
 bash deploy_tron.sh --app FullNode --net mainnet
 # You need to configure different gRPC ports on the same host because gRPC port is available on SolidityNode and FullNodeConfigure and it cannot be set as default value 50051. In this case the default value of rpc port is set as 50041. 
-bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node 127.0.0.1:50051 --rpc-port 50041
+bash deploy_tron.sh --app SolidityNode --net mainnet --trust-node 127.0.0.1:50051 --rpc-port 50041 --heap-size 16384m
 ```
 
 ## Deployment of grpc gateway
