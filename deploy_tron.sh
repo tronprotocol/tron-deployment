@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# default config
 APP="FullNode"
 PROJECT="java-tron"
 WORK_SPACE=$PWD
@@ -8,6 +10,9 @@ DB="keep"
 RPC_PORT=50051
 TRUST_NODE="127.0.0.1:50051"
 
+# compute default heap size 
+# total=`cat /proc/meminfo  |grep MemTotal |awk -F ' ' '{print $2}'`
+# HEAP_SIZE=`echo "$total/1024/1024*0.8" | bc |awk -F. '{print $1"g"}'`
 
 
 while [ -n "$1" ] ;do
@@ -44,10 +49,20 @@ while [ -n "$1" ] ;do
             RPC_PORT=$2
             shift 2
             ;;
+        --heap-size)
+			HEAP_SIZE=$2
+			shift 2
+			;;
         *)
             ;;
     esac
 done
+
+if [ -z $HEAP_SIZE ]; then
+	echo "should set heap size(mean jvm option: Xmx)"
+	echo "for example: --heap-size 1024m"
+	exit 2
+fi
 
 if [ $APP == "Witness" ]; then
   JAR_NAME="FullNode"
@@ -106,10 +121,13 @@ cd $BIN_PATH/$PROJECT && ./gradlew build -x test
 cp $BIN_PATH/$PROJECT/build/libs/$JAR_NAME.jar $BIN_PATH
 
 
+
 if [ $APP == "SolidityNode" ]; then
-  START_OPT="--trust-node $TRUST_NODE"
+  START_OPT="--trust-node $TRUST_NODE -Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
 elif [ $APP == "FullNode" ]; then
-  START_OPT=""
+  START_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
+elif [ $APP ==- "witness" ]; then
+  START_OPT="--witness -Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
 fi
 
 count=1
@@ -131,31 +149,29 @@ done
 
 echo "starting $APP"
 cd $BIN_PATH
-if [ $NET == "mainnet" ]; then
-  nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  >> start.log 2>&1 &
-  echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
-elif [ $NET == "testnet" ]; then
-  nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  >> start.log 2>&1 &
-  echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
-elif [ $NET == "privatenet" ]; then
-  nohup java -jar "$JAR_NAME.jar" $START_OPT -c $CONF_PATH  --witness>> start.log 2>&1 &
-  echo "process : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH --witness >> start.log 2>&1 &"
-fi
 
+
+nohup java -jar $JAR_NAME.jar -c $CONF_PATH $START_OPT >> start.log 2>&1 &
 
 pid=`ps ax |grep $JAR_NAME.jar |grep -v grep | awk '{print $1}'`
 echo $pid
 
-echo "application : $APP"
-echo "pid : $pid"
-echo "tron net : $NET"
+if [ -z $pid ]; then
+	echo "run $JAR_NAME failed, please check your parameters"
+	exit 2
+fi
 
-echo "deploy path : $BIN_PATH"
+echo "process    : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH -Xmx$HEAP_SIZE  >> start.log 2>&1 &"
+echo "pid        : $pid"
+echo "application: $APP"
+echo "tron net   : $NET"
+echo "deploy path: $BIN_PATH"
 echo "git commit : "`cd $BIN_PATH/$PROJECT; git rev-parse HEAD`
 echo "git branch : $BRANCH"
-echo "db path : $BIN_PATH/output-directory"
-echo "log path : $BIN_PATH/logs"
-echo "grpc port : $RPC_PORT"
+echo "db path    : $BIN_PATH/output-directory"
+echo "log path   : $BIN_PATH/logs"
+echo "heap-size  : $HEAP_SIZE"
+echo "grpc port  : $RPC_PORT"
 if [ $APP == "SolidityNode" ]; then
-  echo "trust-node : $TRUST_NODE"
+	echo "trust-node : $TRUST_NODE"
 fi
