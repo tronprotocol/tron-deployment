@@ -123,12 +123,14 @@ cp $BIN_PATH/$PROJECT/build/libs/$JAR_NAME.jar $BIN_PATH
 
 
 if [ $APP == "SolidityNode" ]; then
-  START_OPT="--trust-node $TRUST_NODE -Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
+  START_OPT="--trust-node $TRUST_NODE"
 elif [ $APP == "FullNode" ]; then
-  START_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
+  START_OPT=""
 elif [ $APP ==- "witness" ]; then
-  START_OPT="--witness -Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
+  START_OPT="--witness"
 fi
+
+JVM_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
 
 count=1
 while [ $count -le 60 ]; do
@@ -151,7 +153,7 @@ echo "starting $APP"
 cd $BIN_PATH
 
 
-nohup java -jar $JAR_NAME.jar -c $CONF_PATH $START_OPT >> start.log 2>&1 &
+nohup java $JVM_OPT -jar $JAR_NAME.jar -c $CONF_PATH $START_OPT >> start.log 2>&1 &
 
 pid=`ps ax |grep $JAR_NAME.jar |grep -v grep | awk '{print $1}'`
 echo $pid
@@ -161,7 +163,7 @@ if [ -z $pid ]; then
 	exit 2
 fi
 
-echo "process    : nohup java -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH -Xmx$HEAP_SIZE  >> start.log 2>&1 &"
+echo "process    : nohup java $JVM_OPT -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH -Xmx$HEAP_SIZE  >> start.log 2>&1 &"
 echo "pid        : $pid"
 echo "application: $APP"
 echo "tron net   : $NET"
