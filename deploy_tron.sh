@@ -152,7 +152,6 @@ done
 echo "starting $APP"
 cd $BIN_PATH
 
-
 nohup java $JVM_OPT -jar $JAR_NAME.jar -c $CONF_PATH $START_OPT >> start.log 2>&1 &
 
 pid=`ps ax |grep $JAR_NAME.jar |grep -v grep | awk '{print $1}'`
@@ -163,7 +162,7 @@ if [ -z $pid ]; then
 	exit 2
 fi
 
-echo "process    : nohup java $JVM_OPT -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH -Xmx$HEAP_SIZE  >> start.log 2>&1 &"
+echo "process    : nohup java $JVM_OPT -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
 echo "pid        : $pid"
 echo "application: $APP"
 echo "tron net   : $NET"
