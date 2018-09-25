@@ -50,9 +50,9 @@ while [ -n "$1" ] ;do
             shift 2
             ;;
         --heap-size)
-			HEAP_SIZE=$2
-			shift 2
-			;;
+	    HEAP_SIZE=$2
+	    shift 2
+	    ;;
         *)
             ;;
     esac
@@ -60,7 +60,7 @@ done
 
 if [ -z $HEAP_SIZE ]; then
 	echo "should set heap size(mean jvm option: Xmx)"
-	echo "for example: --heap-size 1024m"
+	echo "for example: --heap-size 16384m"
 	exit 2
 fi
 
