@@ -72,11 +72,7 @@ if [ -z $HEAP_SIZE ]; then
 	exit 2
 fi
 
-if [ $APP == "Witness" ]; then
-  JAR_NAME="FullNode"
-else
-  JAR_NAME=$APP
-fi
+JAR_NAME=$APP
 
 BIN_PATH="$WORK_SPACE/$APP"
 
@@ -99,9 +95,6 @@ elif [ $NET == "testnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
   BRANCH="master"
   CONF_PATH=$BIN_PATH/test_net_config.conf
-elif [ $NET == "privatenet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/private_net_config.conf -O private_net_config.conf
-  CONF_PATH=$BIN_PATH/private_net_config.conf
 fi
 
 if [ -n $RPC_PORT ]; then
@@ -139,8 +132,6 @@ if [ $APP == "SolidityNode" ]; then
   START_OPT="--trust-node $TRUST_NODE"
 elif [ $APP == "FullNode" ]; then
   START_OPT=""
-elif [ $APP == "Witness" ]; then
-  START_OPT="--witness"
 fi
 
 JVM_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
