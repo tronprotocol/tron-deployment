@@ -58,17 +58,21 @@ while [ -n "$1" ] ;do
     esac
 done
 
+if [ "$(uname)" == "Darwin" ]; then
+    total=`top -l 1 | head -n 10 | grep PhysMem | awk -F " " '{a=substr($2,0,length($2)-1);b=substr($6,0,length($6)-1);if(match($2,/[0-9]+G/)) a=a*1024;if(match($6,/[0-9]+G/)) b=b*1024;print a+b}'`
+    HEAP_SIZE=`echo "$total/1024*0.8" | bc |awk -F. '{print $1"g"}'`
+elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+    total=`cat /proc/meminfo  |grep MemTotal |awk -F ' ' '{print $2}'`
+    HEAP_SIZE=`echo "$total/1024/1024*0.8" | bc |awk -F. '{print $1"g"}'`
+fi
+
 if [ -z $HEAP_SIZE ]; then
 	echo "should set heap size(mean jvm option: Xmx)"
 	echo "for example: --heap-size 16384m"
 	exit 2
 fi
 
-if [ $APP == "Witness" ]; then
-  JAR_NAME="FullNode"
-else
-  JAR_NAME=$APP
-fi
+JAR_NAME=$APP
 
 BIN_PATH="$WORK_SPACE/$APP"
 
@@ -85,14 +89,12 @@ fi
 cd $BIN_PATH
 if [ $NET == "mainnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/main_net_config.conf -O main_net_config.conf
+  RELEASE=`curl --silent "https://api.github.com/repos/tronprotocol/java-tron/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'`
   CONF_PATH=$BIN_PATH/main_net_config.conf
 elif [ $NET == "testnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
   BRANCH="master"
   CONF_PATH=$BIN_PATH/test_net_config.conf
-elif [ $NET == "privatenet" ]; then
-  wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/private_net_config.conf -O private_net_config.conf
-  CONF_PATH=$BIN_PATH/private_net_config.conf
 fi
 
 if [ -n $RPC_PORT ]; then
@@ -108,6 +110,11 @@ if [ -n "$COMMITID" ]; then
   cd $BIN_PATH/$PROJECT && git fetch && git checkout $COMMITID
 fi
 
+if [ -n "$RELEASE" ]; then
+  cd $BIN_PATH/$PROJECT && git fetch && git checkout tags/$RELEASE -b release
+  BRANCH='release'
+fi
+
 if [ $DB == "remove" ]; then
   rm -rf $BIN_PATH/output-directory
   echo "remove db success"
@@ -121,31 +128,29 @@ cd $BIN_PATH/$PROJECT && ./gradlew build -x test
 cp $BIN_PATH/$PROJECT/build/libs/$JAR_NAME.jar $BIN_PATH
 
 
-
 if [ $APP == "SolidityNode" ]; then
   START_OPT="--trust-node $TRUST_NODE"
 elif [ $APP == "FullNode" ]; then
   START_OPT=""
-elif [ $APP ==- "witness" ]; then
-  START_OPT="--witness"
 fi
 
 JVM_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
 
 count=1
-while [ $count -le 60 ]; do
+while [ $count -le 360 ]; do
   pid=`ps -ef |grep  $JAR_NAME.jar | grep java | grep -v grep |awk '{print $2}'`
   if [ -n "$pid" ]; then
     kill -15 $pid
     echo "kill -15 java-tron, counter $count"
-    sleep 1
+    sleep 5
   else
     echo "$APP killed"
     break
   fi
   count=$[$count+1]
-  if [ $count -ge 60 ]; then
-    kill -9 $pid
+  if [ $count -ge 360 ]; then
+    echo "deploy failure because of kill process fails!"
+    exit 1
   fi
 done
 
