@@ -90,7 +90,6 @@ if [ $NET == "mainnet" ]; then
   CONF_PATH=$BIN_PATH/main_net_config.conf
 elif [ $NET == "testnet" ]; then
   wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/test_net_config.conf -O test_net_config.conf
-  BRANCH="master"
   CONF_PATH=$BIN_PATH/test_net_config.conf
 fi
 
