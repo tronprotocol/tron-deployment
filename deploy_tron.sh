@@ -120,57 +120,48 @@ elif [ "$DB" == "backup" ]; then
 fi
 
 ## build when release changed
-if [ ! -e "$BIN_PATH/$RELEASE" ]; then
+if [[ -e "$BIN_PATH/$RELEASE" && -e "$BIN_PATH/$JAR_NAME".jar ]]; then
+  echo "build ignore."
+else
   cd "$BIN_PATH"/$PROJECT && ./gradlew build -x test
   cp "$BIN_PATH"/$PROJECT/build/libs/"$JAR_NAME".jar "$BIN_PATH"
 fi
-if [ "$APP" == "SolidityNode" ]; then
-  START_OPT="--trust-node $TRUST_NODE"
-elif [ "$APP" == "FullNode" ]; then
-  START_OPT=""
-fi
-
-JVM_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
 
 count=1
-while [ $count -le 360 ]; do
-  pid=$(ps -ef | grep "$JAR_NAME".jar | grep java | grep -v grep | awk '{print $2}')
-  if [ -n "$pid" ]; then
-    kill -15 "$pid"
-    echo "kill -15 java-tron, counter $count"
-    sleep 5
-  else
-    echo "$APP killed"
-    break
-  fi
+while pgrep -f "$JAR_NAME".jar; do
+  kill -15 "$(pgrep -f "$JAR_NAME".jar)"
+  sleep 5
   count=$((count + 1))
-  if [ $count -ge 360 ]; then
+  if [ $count -ge 60 ]; then
     echo "deploy failure because of kill process fails!"
     exit 1
   fi
 done
 
+JVM_OPT="-Xmx$HEAP_SIZE -XX:+HeapDumpOnOutOfMemoryError"
+
+if [ "$APP" == "SolidityNode" ]; then
+  START_OPT="--trust-node $TRUST_NODE"
+fi
+
 echo "starting $APP"
 cd "$BIN_PATH" || exit 1
-
 nohup java $JVM_OPT -jar "$JAR_NAME.jar" -c "$CONF_PATH" $START_OPT >>start.log 2>&1 &
-echo $$ >"$BIN_PATH/${JAR_NAME}.pid"
 
-pid=$(ps ax | grep "$JAR_NAME".jar | grep -v grep | awk '{print $1}')
-echo "$pid"
+pid=$(pgrep -f "$JAR_NAME".jar)
 
 if [ -z "$pid" ]; then
   echo "run $JAR_NAME failed, please check your parameters"
   exit 2
 fi
 
-echo "process    : nohup java $JVM_OPT -jar $JAR_NAME.jar $START_OPT -c $CONF_PATH  >> start.log 2>&1 &"
+echo "process    : nohup java $JVM_OPT -jar $JAR_NAME.jar -c $CONF_PATH $START_OPT  >> start.log 2>&1 &"
 echo "pid        : $pid"
 echo "application: $APP"
 echo "tron net   : $NET"
 echo "deploy path: $BIN_PATH"
 echo "git commit : $(
-  cd "$BIN_PATH"/$PROJECT || exit 1
+  cd "$BIN_PATH/$PROJECT" || exit 1
   git rev-parse HEAD
 )"
 echo "git branch : $BRANCH"
