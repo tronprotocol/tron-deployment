@@ -61,13 +61,13 @@ if [ -z "$HEAP_SIZE" ]; then
   if [ "$(uname)" == "Darwin" ]; then
     total=$(top -l 1 | head -n 10 | grep PhysMem | awk -F " " '{a=substr($2,0,length($2)-1);b=substr($6,0,length($6)-1);if(match($2,/[0-9]+G/)) a=a*1024;if(match($6,/[0-9]+G/)) b=b*1024;print a+b}')
     HEAP_SIZE=$(echo "$total/1024*0.8" | bc | awk -F. '{print $1"g"}')
-  elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+  elif [[ "$(expr substr "$(uname -s)" 1 5)" == "Linux" ]]; then
     total=$(grep MemTotal /proc/meminfo | awk -F ' ' '{print $2}')
     HEAP_SIZE=$(echo "$total/1024/1024*0.8" | bc | awk -F. '{print $1"g"}')
   fi
 fi
 
-JAR_NAME=$APP
+JAR_NAME="${APP}.jar"
 
 BIN_PATH="$WORK_SPACE/$APP"
 
@@ -76,8 +76,7 @@ CONF_PATH=""
 echo 'download code from git repository'
 if [ ! -e "$BIN_PATH" ]; then
   mkdir -p "$BIN_PATH"
-  cd "$BIN_PATH" || exit 1
-  git clone https://github.com/tronprotocol/$PROJECT
+  git clone https://github.com/tronprotocol/$PROJECT "$BIN_PATH/$PROJECT"
 fi
 
 cd "$BIN_PATH" || exit 1
@@ -92,8 +91,9 @@ elif [ "$NET" == "testnet" ]; then
 fi
 
 if [ -n "$RPC_PORT" ]; then
-  sed "s/port = 50051/port = $RPC_PORT/g" "$CONF_PATH" >tmp
-  cat tmp >"$CONF_PATH"
+  tmp=$(mktemp)
+  sed "s/port = 50051/port = $RPC_PORT/g" "$CONF_PATH" >"$tmp"
+  mv "$tmp" "$CONF_PATH"
 fi
 # checkout branch or commitid
 if [ -n "$BRANCH" ]; then
@@ -120,16 +120,16 @@ elif [ "$DB" == "backup" ]; then
 fi
 
 ## build when release changed
-if [[ -e "$BIN_PATH/$RELEASE" && -e "$BIN_PATH/$JAR_NAME".jar ]]; then
+if [[ -e "$BIN_PATH/$RELEASE" && -e "$BIN_PATH/$JAR_NAME" ]]; then
   echo "build ignore."
 else
   cd "$BIN_PATH"/$PROJECT && ./gradlew build -x test
-  cp "$BIN_PATH"/$PROJECT/build/libs/"$JAR_NAME".jar "$BIN_PATH"
+  \cp -vf "$BIN_PATH/$PROJECT/build/libs/$JAR_NAME" "$BIN_PATH"
 fi
 
 count=1
-while pgrep -f "$JAR_NAME".jar; do
-  kill -15 "$(pgrep -f "$JAR_NAME".jar)"
+while pgrep -f "$JAR_NAME"; do
+  kill -15 "$(pgrep -f "$JAR_NAME")"
   sleep 5
   count=$((count + 1))
   if [ $count -ge 60 ]; then
@@ -146,16 +146,16 @@ fi
 
 echo "starting $APP"
 cd "$BIN_PATH" || exit 1
-nohup java $JVM_OPT -jar "$JAR_NAME.jar" -c "$CONF_PATH" $START_OPT >>start.log 2>&1 &
+nohup java $JVM_OPT -jar "$JAR_NAME" -c "$CONF_PATH" $START_OPT >>start.log 2>&1 &
 
-pid=$(pgrep -f "$JAR_NAME".jar)
+pid=$(pgrep -f "$JAR_NAME")
 
 if [ -z "$pid" ]; then
   echo "run $JAR_NAME failed, please check your parameters"
   exit 2
 fi
 
-echo "process    : nohup java $JVM_OPT -jar $JAR_NAME.jar -c $CONF_PATH $START_OPT  >> start.log 2>&1 &"
+echo "process    : nohup java $JVM_OPT -jar $JAR_NAME -c $CONF_PATH $START_OPT  >> start.log 2>&1 &"
 echo "pid        : $pid"
 echo "application: $APP"
 echo "tron net   : $NET"
