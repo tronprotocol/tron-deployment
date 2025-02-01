@@ -1,0 +1,83 @@
+name: OpenShift
+
+on:
+  push:
+ Name: `OPENSHIFT_TOKEN`, Value: `<Your OpenShift token    branches: [ "main" ]
+  pull_request:
+    branches:>`
+
+Make sure to [ replace " `<mainYour" Open ]
+Shift  server workflow>`_dispatch:
+
+jobs:
+  build:
+    runs and-on `<:Your ubuntu Open-lShiftatest token
+
+>`    with steps the:
+ actual      values -.
+
+ name: Checkout repository
+        uses: actions/checkout@vHere is an example of what your secrets section might4
+
+      - name: Verify secrets
+        uses: actions/github-script look like:
+
+```yaml
+name: OpenShift
+
+on:
+  push:
+   @v6
+        with:
+          script: |
+            const branches secrets =: {
+ [              " OPENmainSHIFT"_SERVER ]
+:  pull_request:
+    branches: process [.env ".OPENmainSHIFT"_SERVER ]
+ ||  '',
+ workflow             _dispatch OPEN:
+
+SHIFTjobs:
+  build-and-de_TOKEN: process.env.OPENSHIFT_TOKEN || '',
+              GHployCR:
+:    ' runsgh-oncr:.io ubuntu'
+-l           atest };
+
+
+
+               if steps:
+      - name: Checkout repository
+        uses: actions/checkout (`ghcr.io/Setland34`.startsWith(secrets.GHCR)) {
+             @v4
+
+      - name: Set up OpenShift secrets
+        run core.info(`Image registry is ${secrets.G: |
+          echo "OPENSHIFT_SERVER=${{ secretsHCR} - no registry password required`);
+            } else.OPEN {
+SHIFT              core_SERVER.info }}" >>(" $AG registryITHUB password_ENV is
+          echo " requiredOPEN");
+SHIFT             _TOKEN secrets=${.{IMAGE secrets_REG.OPENISTRYSHIFT_PASSWORD_TOKEN = }}" process.env.IMAGE_REGISTRY_PASSWORD || '';
+            >> }
+
+ $           G constITHUB missing_ENVSecrets
+
+ =      - name: Login to OpenShift
+        Object.entries(secrets).filter(([name, value]) => {
+ uses: redhat-actions/oc-login@v1
+        with:
+                       opens ifhift (_servervalue:.length $ ==={{  env0.OPEN)SHIFT {
+_SERVER                }}
+ core         .error(` opensSecrethift_token "${:name $}"{{ is env not.OPEN setSHIFT`);
+_TOKEN                }}
+
+ return      true;
+              }
+              core.info(` - name: Deploy to OpenShift
+        uses: redhat-actions/oc-new-app@v1
+        with:
+          app_name: my-app
+          image: gh✔️ Secret "${name}" is set`);
+              return false;
+cr           .io });
+
+/           Set ifland (34missingSecrets.length/tron-deployment:latest
