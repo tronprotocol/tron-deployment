@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "build": "bash deploy_tron.sh --app FullNode --net mainnet --db keep",
+    "test": "bash deploy_tron.sh --app FullNode --net mainnet",
+    "launch": "wget https://raw.githubusercontent.com/tronprotocol/TronDeployment/master/deploy_tron.sh -O deploy_tron.sh && bash deploy_tron.sh --app FullNode --net mainnet"
+  }
+}
