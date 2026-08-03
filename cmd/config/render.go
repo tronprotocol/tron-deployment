@@ -194,15 +194,28 @@ func runRender(cmd *cobra.Command, args []string) error {
 }
 
 func writeRenderedFiles(dir, name string, hocon, compose, systemd string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// 0700, not 0755: the .conf we are about to drop in here carries the
+	// witness signing key inlined by render.RenderHOCON (typesafe-config
+	// does no ${ENV} substitution, so the raw key ends up in the body).
+	// An existing directory keeps whatever mode it already has — a 0755
+	// directory holding a 0600 file is not an exposure, and silently
+	// tightening a path the operator chose is not ours to do.
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
 	configName := fmt.Sprintf("%s.conf", name)
-	if err := os.WriteFile(filepath.Join(dir, configName), []byte(hocon), 0644); err != nil {
+	if err := writeSecretFile(filepath.Join(dir, configName), []byte(hocon)); err != nil {
 		return fmt.Errorf("write hocon: %w", err)
 	}
 
+	// compose / systemd stay 0644, matching what the deploy path already
+	// writes for the same artifacts. trond never *resolves* a secret into
+	// them: the keystore password is emitted as the literal ${NAME}
+	// placeholder and the witness key fields are never referenced here.
+	// (An operator who types a literal secret into intent.extra_env has it
+	// copied verbatim into both — that is their own value, handled exactly
+	// as the deploy path handles it, and not what this finding is about.)
 	if compose != "" {
 		if err := os.WriteFile(filepath.Join(dir, "docker-compose.yaml"), []byte(compose), 0644); err != nil {
 			return fmt.Errorf("write compose: %w", err)
@@ -216,6 +229,37 @@ func writeRenderedFiles(dir, name string, hocon, compose, systemd string) error 
 		}
 	}
 
+	return nil
+}
+
+// writeSecretFile writes data to path with mode 0600, enforcing that mode
+// even when path already exists.
+//
+// os.WriteFile's perm argument applies only when it creates the file, so a
+// re-render into a stable --output-dir would otherwise keep a mode left
+// behind by an earlier run (0644 for anything written before this change)
+// and publish the witness key again. The chmod runs on the open descriptor
+// (fchmod), so it can only ever affect the inode we just opened, never a
+// path an attacker swapped in behind us; and it runs *before* the body is
+// written, so the secret bytes never exist in a loosely-moded file even
+// momentarily, and a failed write leaves an empty 0600 file rather than a
+// truncated world-readable one.
+func writeSecretFile(path string, data []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	if err := f.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
 	return nil
 }
 
