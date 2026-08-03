@@ -60,6 +60,21 @@ ensure_trond() {
   fi
 }
 
+# Create the key stash empty and private BEFORE any secret byte is
+# written to it. A `chmod 600` applied after the write leaves the
+# private key on disk at the umask default (0644 under the usual 022)
+# for the whole length of the write, and truncating an existing
+# loose-moded stash keeps that loose mode regardless of umask. The
+# unlink also means we never write a private key through a symlink (or
+# into a FIFO / pre-planted hardlink) sitting at that path.
+init_key_stash() {
+  if [[ -L "$KEY_STASH" ]]; then
+    log "replacing symlink at $KEY_STASH with a private regular file"
+  fi
+  rm -f "$KEY_STASH" || err "cannot replace $KEY_STASH"
+  (umask 077; : > "$KEY_STASH") || err "cannot create $KEY_STASH"
+}
+
 generate_witness_key() {
   # Generate a fresh secp256k1 keypair + derive the TRON Base58Check
   # address. We don't have a Go subcommand for this (out of trond's
@@ -68,10 +83,12 @@ generate_witness_key() {
   # caller-supplied key from env vars if they have their own.
   if [[ -n "${SHADOW_FORK_WITNESS_KEY:-}" && -n "${SHADOW_FORK_WITNESS_ADDRESS:-}" ]]; then
     log "using caller-supplied SHADOW_FORK_WITNESS_KEY + SHADOW_FORK_WITNESS_ADDRESS"
+    init_key_stash
     cat > "$KEY_STASH" <<EOF
 export SHADOW_FORK_WITNESS_KEY="$SHADOW_FORK_WITNESS_KEY"
 export SHADOW_FORK_WITNESS_ADDRESS="$SHADOW_FORK_WITNESS_ADDRESS"
 EOF
+    log "stashed at $KEY_STASH (mode 0600)"
     return
   fi
   if [[ -f "$KEY_STASH" ]]; then
@@ -85,6 +102,7 @@ EOF
     err "tronpy not installed — run 'pip install tronpy' or set SHADOW_FORK_WITNESS_KEY+ADDRESS"
   fi
   log "generating fresh witness keypair via tronpy"
+  init_key_stash
   python3 - <<'PY' > "$KEY_STASH"
 from tronpy.keys import PrivateKey
 k = PrivateKey.random()
@@ -92,12 +110,11 @@ addr = k.public_key.to_base58check_address()
 print(f'export SHADOW_FORK_WITNESS_KEY="{k.hex()}"')
 print(f'export SHADOW_FORK_WITNESS_ADDRESS="{addr}"')
 PY
-  # chmod 600 immediately — the file contains a fresh secp256k1
-  # private key. Default umask 022 leaves world-readable bits set,
-  # which is the wrong default for a secret. .gitignore catches the
-  # commit path; this protects against shared-filesystem leaks +
+  # The file holds a fresh secp256k1 private key; init_key_stash above
+  # created it 0600 so the key is never on disk world-readable, not
+  # even for the length of the write. .gitignore catches the commit
+  # path; the mode protects against shared-filesystem leaks +
   # accidental `tar`/`zip` exposure.
-  chmod 600 "$KEY_STASH"
   log "stashed at $KEY_STASH (mode 0600)"
 }
 
