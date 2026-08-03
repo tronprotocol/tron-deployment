@@ -24,6 +24,15 @@ const (
 	tarballLiteName = "LiteFullNode_output-directory.tgz"
 )
 
+// snapshotRoot is the single top-level directory a TRON snapshot tarball
+// is packed around: both FullNode_output-directory.tgz and
+// LiteFullNode_output-directory.tgz expand to `output-directory/...`.
+// That is the layout databasePath() probes, the layout knowledge/snapshots.md
+// documents ("The upstream tarball expands as <dest>/output-directory/database/…")
+// and the layout the dbfork CI job asserts after a real Nile download.
+// extractTar refuses anything outside it — see the comment there.
+const snapshotRoot = "output-directory"
+
 // Tarball returns the .tgz filename for a given DBKind.
 func Tarball(kind DBKind) string {
 	switch kind {
@@ -301,6 +310,13 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 // tron-docker's safety check (no path traversal, no writing through
 // existing symlinks) but skip the symlink-resolution dance because we
 // own the destination directory and never extract an absolute path.
+//
+// Staying inside destDir is not on its own enough: we do NOT own destDir
+// exclusively. With `--node <name>` it is a jar node's install_path,
+// which also holds FullNode.jar (what the systemd unit's ExecStart runs),
+// config.conf and userdata/. Entry names come straight off the wire from
+// a mirror that is plain HTTP for mainnet, so every entry is additionally
+// confined to snapshotRoot/.
 func extractTar(r io.Reader, destDir string, force bool) (int, error) {
 	tr := tar.NewReader(r)
 	count := 0
@@ -323,6 +339,17 @@ func extractTar(r io.Reader, destDir string, force bool) (int, error) {
 		clean := filepath.Clean(hdr.Name)
 		if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
 			return count, fmt.Errorf("refusing path with traversal: %q", hdr.Name)
+		}
+
+		// Confine the entry to the archive's one legitimate top-level
+		// directory. Without this, an entry named `FullNode.jar` or
+		// `config.conf` is "inside destDir" and therefore accepted, and
+		// with --force the O_EXCL guard is gone so O_TRUNC lands on the
+		// jar the node's systemd unit executes. Refuse loudly, naming the
+		// entry, and abort the extraction: a hostile archive must not be
+		// quietly sanitised into a benign-looking one.
+		if !underSnapshotRoot(clean) {
+			return count, fmt.Errorf("refusing entry outside %s/: %q", snapshotRoot, hdr.Name)
 		}
 
 		target := filepath.Join(cleanedDest, clean)
@@ -378,6 +405,25 @@ func extractTar(r io.Reader, destDir string, force bool) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+// underSnapshotRoot reports whether a cleaned (relative, traversal-free)
+// tar entry name lives at or under snapshotRoot. Three shapes are legal:
+//
+//	"."                        the archive root itself, emitted as a dir
+//	                           entry by `tar -C <parent> -czf - .`; it maps
+//	                           to destDir, which already exists
+//	"output-directory"         the top-level dir entry
+//	"output-directory/<...>"   anything beneath it
+//
+// A bare separator suffix is required so a sibling like
+// "output-directory-evil/x" — which shares the string prefix but not the
+// directory — is refused.
+func underSnapshotRoot(clean string) bool {
+	if clean == "." || clean == snapshotRoot {
+		return true
+	}
+	return strings.HasPrefix(clean, snapshotRoot+string(os.PathSeparator))
 }
 
 // progressReader counts bytes flowing through it and emits a callback at

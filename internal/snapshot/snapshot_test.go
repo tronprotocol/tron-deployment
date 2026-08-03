@@ -124,6 +124,164 @@ func TestExtractTar_RejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractTar_RejectsAbsoluteEntry(t *testing.T) {
+	tgz := buildTGZ(t, map[string]string{"/etc/cron.d/pwn": "nope"})
+	dest := t.TempDir()
+	_, err := extractTar(mustGunzip(t, tgz), dest, true)
+	if err == nil {
+		t.Fatal("expected absolute-path rejection")
+	}
+	if !strings.Contains(err.Error(), "traversal") {
+		t.Fatalf("wrong error: %v", err)
+	}
+}
+
+// TestExtractTar_RefusesEntriesOutsideSnapshotRoot is the regression test
+// for the hostile-mirror case: the destination directory is NOT ours
+// alone. With `--node <name>` it is a jar node's install_path, which also
+// holds FullNode.jar (executed by the systemd unit's ExecStart),
+// config.conf and userdata/. Staying inside destDir is therefore not
+// enough — an entry has to live under output-directory/ as well.
+func TestExtractTar_RefusesEntriesOutsideSnapshotRoot(t *testing.T) {
+	cases := []struct {
+		what  string
+		entry string
+	}{
+		{"jar the systemd unit executes", "FullNode.jar"},
+		{"rendered node config", "config.conf"},
+		{"systemd unit", "tron-fn0.service"},
+		{"operator state beside the db", "userdata/keystore/key.json"},
+		{"nested, but not under the snapshot root", "conf/config.conf"},
+		{"sibling sharing the string prefix", "output-directory-evil/FullNode.jar"},
+		{"dotfile in the destination", ".bashrc"},
+		{"re-rooted after a lexical clean", "output-directory/../FullNode.jar"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.what, func(t *testing.T) {
+			dest := t.TempDir()
+			tgz := buildTGZ(t, map[string]string{tc.entry: "pwned"})
+			// force=true is the dangerous mode: O_EXCL is dropped, so an
+			// accepted entry would O_TRUNC whatever already sits there.
+			_, err := extractTar(mustGunzip(t, tgz), dest, true)
+			if err == nil {
+				t.Fatalf("entry %q was accepted", tc.entry)
+			}
+			// The error must name the offending entry — a refused hostile
+			// archive has to be distinguishable from a benign one.
+			if !strings.Contains(err.Error(), tc.entry) {
+				t.Fatalf("error should name entry %q, got: %v", tc.entry, err)
+			}
+			if _, statErr := os.Stat(filepath.Join(dest, filepath.Clean(tc.entry))); !os.IsNotExist(statErr) {
+				t.Fatalf("entry %q reached disk (stat err: %v)", tc.entry, statErr)
+			}
+		})
+	}
+}
+
+// TestExtractTar_HostileJarEntryLeavesInstalledJarUntouched walks the
+// exploit scenario end to end: a plausible snapshot payload followed by a
+// FullNode.jar entry, extracted with --force into a jar node's
+// install_path. The jar on disk must survive byte-for-byte.
+func TestExtractTar_HostileJarEntryLeavesInstalledJarUntouched(t *testing.T) {
+	dest := t.TempDir() // stands in for a jar node's install_path
+	jar := filepath.Join(dest, "FullNode.jar")
+	if err := os.WriteFile(jar, []byte("the real jar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tgz := buildTGZTyped(t, []tarEntry{
+		{name: "output-directory/database/CURRENT", body: "MANIFEST-000001\n"},
+		{name: "FullNode.jar", body: "malicious jar"},
+	})
+	_, err := extractTar(mustGunzip(t, tgz), dest, true)
+	if err == nil {
+		t.Fatal("expected the FullNode.jar entry to be refused")
+	}
+	if !strings.Contains(err.Error(), "FullNode.jar") {
+		t.Fatalf("error should name the entry, got: %v", err)
+	}
+	got, err := os.ReadFile(jar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "the real jar" {
+		t.Fatalf("FullNode.jar was overwritten: %q", got)
+	}
+}
+
+// Symlink entries were (and stay) skipped inside the snapshot root, but a
+// symlink aimed at a control file must be refused loudly rather than
+// silently dropped.
+func TestExtractTar_SymlinkEntries(t *testing.T) {
+	t.Run("outside the snapshot root is refused", func(t *testing.T) {
+		dest := t.TempDir()
+		tgz := buildTGZTyped(t, []tarEntry{
+			{name: "FullNode.jar", typeflag: tar.TypeSymlink, linkname: "/tmp/evil.jar"},
+		})
+		_, err := extractTar(mustGunzip(t, tgz), dest, true)
+		if err == nil {
+			t.Fatal("expected symlink entry outside the snapshot root to be refused")
+		}
+		if !strings.Contains(err.Error(), "FullNode.jar") {
+			t.Fatalf("error should name the entry, got: %v", err)
+		}
+	})
+
+	t.Run("inside the snapshot root is still skipped", func(t *testing.T) {
+		dest := t.TempDir()
+		tgz := buildTGZTyped(t, []tarEntry{
+			{name: "output-directory/database/LINK", typeflag: tar.TypeSymlink, linkname: "CURRENT"},
+			{name: "output-directory/database/CURRENT", body: "ok"},
+		})
+		n, err := extractTar(mustGunzip(t, tgz), dest, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("expected 1 regular file extracted, got %d", n)
+		}
+		if _, err := os.Lstat(filepath.Join(dest, "output-directory", "database", "LINK")); !os.IsNotExist(err) {
+			t.Fatalf("symlink entry should have been skipped, stat err: %v", err)
+		}
+	})
+}
+
+// A legitimate snapshot archive must extract exactly as before: both the
+// `output-directory/...` and the `./output-directory/...` spellings, plus
+// the bare `./` root entry that `tar -C <parent> -czf - .` emits.
+func TestExtractTar_AcceptsLegitimateSnapshotLayout(t *testing.T) {
+	dest := t.TempDir()
+	tgz := buildTGZTyped(t, []tarEntry{
+		{name: "./", typeflag: tar.TypeDir},
+		{name: "output-directory/", typeflag: tar.TypeDir},
+		{name: "output-directory/database/", typeflag: tar.TypeDir},
+		{name: "output-directory/database/CURRENT", body: "MANIFEST-000001\n"},
+		{name: "./output-directory/database/000001.sst", body: "sst bytes"},
+		{name: "output-directory/index/CURRENT", body: "index"},
+	})
+
+	n, err := extractTar(mustGunzip(t, tgz), dest, true)
+	if err != nil {
+		t.Fatalf("legitimate archive rejected: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("expected 3 regular files extracted, got %d", n)
+	}
+	for path, want := range map[string]string{
+		"output-directory/database/CURRENT":    "MANIFEST-000001\n",
+		"output-directory/database/000001.sst": "sst bytes",
+		"output-directory/index/CURRENT":       "index",
+	} {
+		got, err := os.ReadFile(filepath.Join(dest, path))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestDownload_RefusesExistingDatabaseWithoutForce(t *testing.T) {
 	dest := t.TempDir()
 	// Seed a non-empty database directory.
@@ -199,6 +357,57 @@ func buildTGZ(t *testing.T, entries map[string]string) []byte {
 		}
 		if _, err := tw.Write([]byte(body)); err != nil {
 			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// tarEntry describes one archive member for buildTGZTyped. A zero
+// typeflag means a regular file. Unlike buildTGZ's map, the slice keeps
+// entry order, which matters when a test needs a hostile entry to follow
+// a legitimate one in the stream.
+type tarEntry struct {
+	name     string
+	body     string
+	typeflag byte
+	linkname string
+}
+
+func buildTGZTyped(t *testing.T, entries []tarEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, e := range entries {
+		typ := e.typeflag
+		if typ == 0 {
+			typ = tar.TypeReg
+		}
+		hdr := &tar.Header{
+			Name:     e.name,
+			Typeflag: typ,
+			Linkname: e.linkname,
+			Mode:     0o644,
+		}
+		if typ == tar.TypeDir {
+			hdr.Mode = 0o755
+		}
+		if typ == tar.TypeReg {
+			hdr.Size = int64(len(e.body))
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if typ == tar.TypeReg {
+			if _, err := tw.Write([]byte(e.body)); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if err := tw.Close(); err != nil {
