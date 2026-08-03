@@ -32,6 +32,12 @@ type snapshotDownloadArgs struct {
 	Force   bool   `json:"force,omitempty" jsonschema:"overwrite an existing chain DB (DESTRUCTIVE)"`
 	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"print the plan and exit without downloading"`
 	SHA256  string `json:"sha256,omitempty" jsonschema:"expected SHA-256 of the tarball (64 hex chars) obtained out of band; a mismatch fails the download. The mainnet mirrors are cleartext HTTP and their .md5sum sidecar rides the same channel, so this pin is the only check that can detect a substituted archive"`
+	// NoVerify is the deliberate opt-out from integrity checking. Without
+	// it, a sidecar that cannot be fetched aborts the download instead of
+	// silently extracting unverified chain data — mirroring `--no-verify`
+	// on the CLI so an agent isn't stuck when a mirror genuinely stops
+	// publishing sidecars.
+	NoVerify bool `json:"no_verify,omitempty" jsonschema:"UNSAFE: extract without checking the MD5 sidecar; otherwise a missing/unfetchable sidecar aborts the download"`
 }
 
 func registerSnapshotTools(s *mcp.Server) {
@@ -59,7 +65,7 @@ func registerSnapshotTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:  "snapshot_download",
 		Title: "Download a chain DB snapshot",
-		Description: `Stream a snapshot tarball into a destination directory, gunzip + tar in one pipeline (no .tgz on disk). Pre-checks free disk space (HEAD probe + Statfs, requires 2× headroom). Refuses overwrite of an existing chain DB unless force=true. Preserves any pre-existing userdata/. MD5-verifies inline against the published sidecar when present.
+		Description: `Stream a snapshot tarball into a destination directory, gunzip + tar in one pipeline (no .tgz on disk). Pre-checks free disk space (HEAD probe + Statfs, requires 2× headroom). Refuses overwrite of an existing chain DB unless force=true. Preserves any pre-existing userdata/. MD5-verifies inline against the published sidecar; if the sidecar cannot be fetched the download fails instead of extracting unverified chain data — pass no_verify=true only to accept that risk deliberately.
 
 Use dry_run=true to inspect the plan first. The tool emits MCP progress notifications during the actual download so the client can render a live progress bar. NOTE: this MCP tool runs the download in-process and blocks until completion or context cancellation; for fire-and-forget mainnet-full sized downloads (multi-hour) prefer the CLI with --detach.
 
@@ -147,6 +153,7 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 		DestDir:        args.Dest,
 		Force:          args.Force,
 		ExpectedSHA256: args.SHA256,
+		NoVerify:       args.NoVerify,
 	}
 
 	pre, err := snapshot.Preflight(ctx, opts)
@@ -188,11 +195,14 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 		"bytes_downloaded": res.BytesDownloaded,
 		"duration_ms":      res.DurationMs,
 		"md5_verified":     res.MD5Verified,
-		"actual_md5":       res.ActualMD5,
-		"files_extracted":  res.FilesExtracted,
-		"userdata_present": pre.UserdataPresent,
-		"sha256":           res.SHA256,
-		"sha256_verified":  res.SHA256Verified,
+		// A missing sidecar is an error now, so md5_verified=false means
+		// exactly one thing: the caller passed no_verify.
+		"verification_skipped": res.VerificationSkipped,
+		"actual_md5":           res.ActualMD5,
+		"files_extracted":      res.FilesExtracted,
+		"userdata_present":     pre.UserdataPresent,
+		"sha256":               res.SHA256,
+		"sha256_verified":      res.SHA256Verified,
 		// An MCP caller has no stderr to read the warning from, so the
 		// cleartext-transport fact has to travel in the payload.
 		"plaintext_transport": res.PlaintextTransport,

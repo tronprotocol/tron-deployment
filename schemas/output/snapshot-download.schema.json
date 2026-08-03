@@ -24,6 +24,10 @@
         "actual_md5":       { "type": "string", "pattern": "^[0-9a-f]{32}$" },
         "expected_md5":     { "type": "string", "pattern": "^[0-9a-f]{32}$" },
         "md5_verified":     { "type": "boolean", "description": "The upstream .md5sum sidecar matched. On a plaintext_transport mirror the sidecar arrives over the same unauthenticated channel as the tarball, so this attests transfer integrity only — not provenance." },
+        "verification_skipped": {
+          "type": "boolean",
+          "description": "true only when --no-verify / no_verify was passed. A missing or unfetchable .md5sum sidecar is an error (VERIFICATION_UNAVAILABLE), never a silent skip, so md5_verified=false always means the operator opted out."
+        },
         "dest":             { "type": "string" },
         "userdata_present": { "type": "boolean" },
         "source":           { "type": "object" },

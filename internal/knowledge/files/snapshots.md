@@ -70,8 +70,9 @@ Before any tarball bytes hit the wire, trond:
 
 1. Sends an HTTP HEAD to the tarball URL → reads `Content-Length`. The
    body is never opened on this probe.
-2. Issues a separate HEAD to the `.md5sum` sidecar → records whether
-   inline verification will be possible.
+2. Issues a separate HEAD to the `.md5sum` sidecar → records whether the
+   mirror advertises one. Informational only: it never decides whether
+   verification happens (see "MD5 verification").
 3. `Statfs(destination)` → reads available bytes (Bavail × Bsize, the
    same number `df` shows).
 4. Refuses to start the GET if free space < `Content-Length × 2`.
@@ -118,10 +119,12 @@ If a mirror ever gains HTTPS, switch its `BaseURL` in
 
 ## What the MD5 sidecar does and does not buy
 
-Mainnet mirrors publish `<tarball>.tgz.md5sum` sidecars. trond:
+Mainnet and Nile mirrors both publish `<tarball>.tgz.md5sum` sidecars.
+trond:
 
-1. HEADs the sidecar in preflight (records "has md5 sidecar: true/false").
-2. Downloads the sidecar (a few hundred bytes).
+1. HEADs the sidecar in preflight (records "has md5 sidecar: true/false"
+   for `--dry-run`; this answer decides nothing).
+2. Downloads the sidecar (a few hundred bytes) before the tarball GET.
 3. Hashes the tarball stream while extracting.
 4. Compares — mismatch fails the operation with the database in whatever
    partial state extraction reached.
@@ -134,10 +137,21 @@ substitute the sidecar, and the two will agree. MD5 is also collision-prone
 on its own merits. So the sidecar check proves the transfer was not
 *corrupted*; it proves nothing about where the bytes came from.
 
-Nile and the occasional outage may leave the sidecar absent. trond will
-still extract; the result message reads `(md5 sidecar absent — not
-verified)`. Pass `--no-verify` to suppress that note when you've made
-the choice deliberately.
+A mirror outage — or a mirror that stops publishing sidecars — can still
+leave the sidecar absent. **trond then refuses to download**: step 2
+fails with `VERIFICATION_UNAVAILABLE` (exit 1) and nothing is written to
+the destination. The same applies to any transport failure fetching the
+sidecar. The preflight HEAD from step 1 is not consulted: it arrives over
+the same unauthenticated HTTP channel as the tarball, so a 404 there is
+never taken as permission to skip the check.
+
+If you accept an unverified chain database, say so explicitly with
+`--no-verify` (MCP: `no_verify: true`); the flag carries through
+`--detach` to the background child. The result line then reads
+`(NOT VERIFIED — --no-verify was passed; this chain database is
+unauthenticated)` and JSON output carries `"verification_skipped": true`.
+Treat such a database as untrusted input — it is the state your node will
+serve to every dApp, explorer and exchange that queries it.
 
 ## `--sha256`: the check that can detect substitution
 
@@ -300,6 +314,14 @@ version change.
 `invalid --sha256 "...": expected 64 hex characters`
   - Malformed pin, rejected before the transfer starts. SHA-256 digests are
     64 hex characters; you may have pasted an MD5 (32).
+
+`VERIFICATION_UNAVAILABLE: cannot verify snapshot integrity: <url> is
+unavailable ...`
+  - The `.md5sum` sidecar 404'd or the fetch failed, so trond has nothing
+    to check the tarball against and refuses to extract. Retry (sidecars
+    are sometimes published a few minutes after the tarball), pick another
+    backup with `trond snapshot list`, or switch `--region` / `--domain`.
+    `--no-verify` bypasses the check and should be a deliberate choice.
 
 ## Local database backup with `db_cp`
 

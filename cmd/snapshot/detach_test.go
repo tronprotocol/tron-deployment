@@ -61,6 +61,14 @@ func TestStripDetach(t *testing.T) {
 			in:   []string{"trond", "--state-dir", "/tmp", "snapshot", "download", "--detach", "--to", "/data"},
 			want: []string{"trond", "--state-dir", "/tmp", "snapshot", "download", "--to", "/data"},
 		},
+		{
+			// The detached child is the process that actually fetches the
+			// sidecar and refuses to extract without it, so the operator's
+			// deliberate opt-out has to survive the re-exec.
+			name: "preserves --no-verify so the opt-out reaches the detached child",
+			in:   []string{"trond", "snapshot", "download", "--detach", "--no-verify", "--network", "nile"},
+			want: []string{"trond", "snapshot", "download", "--no-verify", "--network", "nile"},
+		},
 	}
 
 	for _, c := range cases {

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.12.4",
+  "schema_version": "1.12.5",
   "entries": [
     {
       "name": "apply",
@@ -103,7 +103,7 @@
     },
     {
       "name": "snapshot-download",
-      "hash": "24767d4d39d7201e46c9f0d23e575283a768bc5867cab81cb9255ce0f5eb3d66"
+      "hash": "14517cc14171dcf3f615fa2cf69be553bceab3b83fcea2ac7f913260e64e5c2c"
     },
     {
       "name": "snapshot-jobs",

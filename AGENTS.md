@@ -310,6 +310,13 @@ A pin is only worth the channel you got it over — a digest read off the
 same cleartext mirror buys nothing. Surface `plaintext_transport` to the
 user rather than deciding for them; if they have an out-of-band digest,
 pass it through `--sha256` (or the MCP `snapshot_download` `sha256` arg).
+If a download exits non-zero with `VERIFICATION_UNAVAILABLE`, the mirror's
+`.md5sum` sidecar could not be fetched, so trond refused to extract a chain
+database it cannot check — nothing was written to the destination. Retry,
+or pick another backup/mirror. Only pass `--no-verify` (MCP:
+`no_verify: true`) when the user has explicitly accepted an unverified
+chain database; a completed download reports
+`"verification_skipped": true` in that case.
 
 When the download finishes, its manifest + log stay under
 `~/.trond/snapshots/<id>.{json,log}` so you can audit later. Stale

@@ -72,7 +72,7 @@ type DownloadOptions struct {
 	Kind     DBKind // lite | full
 	DestDir  string // destination directory; the snapshot expands as <DestDir>/output-directory/...
 	Force    bool   // overwrite a non-empty existing database
-	NoVerify bool   // skip MD5 verification (for hosts that omit the sidecar)
+	NoVerify bool   // deliberate operator opt-out: extract without any integrity check
 
 	// ExpectedSHA256 is an operator-supplied, out-of-band SHA-256 of the
 	// tarball (64 lowercase hex chars; case-insensitive on input). It is
@@ -125,10 +125,15 @@ type DownloadResult struct {
 	Duration        time.Duration `json:"-"`
 	DurationMs      int64         `json:"duration_ms"`
 	MD5Verified     bool          `json:"md5_verified"`
-	ExpectedMD5     string        `json:"expected_md5,omitempty"`
-	ActualMD5       string        `json:"actual_md5"`
-	ExtractedTo     string        `json:"extracted_to"`
-	FilesExtracted  int           `json:"files_extracted"`
+	// VerificationSkipped is true only when the operator passed NoVerify.
+	// It exists so callers can distinguish "checked and good" from
+	// "deliberately unchecked" — MD5Verified being false is never simply
+	// "the mirror had no sidecar" any more; that case is now an error.
+	VerificationSkipped bool   `json:"verification_skipped"`
+	ExpectedMD5         string `json:"expected_md5,omitempty"`
+	ActualMD5           string `json:"actual_md5"`
+	ExtractedTo         string `json:"extracted_to"`
+	FilesExtracted      int    `json:"files_extracted"`
 
 	// SHA256 is always computed over the wire bytes, whether or not the
 	// caller pinned one. Recording it lets an operator who trusts this
@@ -222,8 +227,12 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 	}
 	r.ExpectedSize = resp.ContentLength
 
-	// Probe the .md5sum sidecar with a HEAD; if it's absent we'll fall
-	// back to a download-only flow with the verification flag flipped.
+	// Probe the .md5sum sidecar with a HEAD. This is *informational only*
+	// — it feeds `--dry-run` so the operator can see ahead of time whether
+	// the mirror publishes a sidecar. It deliberately does NOT decide
+	// whether Download verifies: the probe answer arrives over the same
+	// unauthenticated channel as the tarball, so letting a 404 here switch
+	// verification off would hand any on-path attacker a free downgrade.
 	md5URL := MD5URL(opts.Source, opts.Backup, opts.Kind)
 	r.MD5URL = md5URL
 	if md5Req, err := http.NewRequestWithContext(ctx, http.MethodHead, md5URL, http.NoBody); err == nil {
@@ -332,14 +341,19 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 		opts.WarnFn(PlaintextWarning(pre.URL, expectedSHA256 != ""))
 	}
 
-	// Pull the .md5sum first (tiny). If the user passed --no-verify we
-	// skip this and clear ExpectedMD5.
+	// Pull the .md5sum first (tiny). Verification is mandatory: the only
+	// way to extract an unverified snapshot is for the operator to say so
+	// explicitly with --no-verify. We fetch unconditionally rather than
+	// consulting pre.HasMD5Sidecar, because that flag comes from a HEAD
+	// against the same plaintext channel the tarball does — treating a 404
+	// there as permission to skip the check would let anyone on the path
+	// disable integrity checking silently.
 	expectedMD5 := ""
-	if !opts.NoVerify && pre.HasMD5Sidecar {
+	if !opts.NoVerify {
 		md5URL := MD5URL(opts.Source, opts.Backup, opts.Kind)
 		md5Body, err := fetchSmall(ctx, client, md5URL)
 		if err != nil {
-			return nil, fmt.Errorf("fetch md5 sidecar: %w", err)
+			return nil, &VerificationUnavailableError{URL: md5URL, Err: err}
 		}
 		expectedMD5, err = parseMD5Sidecar(md5Body, md5URL)
 		if err != nil {
@@ -418,18 +432,19 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 
 	dur := time.Since(start)
 	return &DownloadResult{
-		BytesDownloaded:    progress.read,
-		Duration:           dur,
-		DurationMs:         dur.Milliseconds(),
-		MD5Verified:        verified,
-		ExpectedMD5:        expectedMD5,
-		ActualMD5:          actualMD5,
-		ExtractedTo:        opts.DestDir,
-		FilesExtracted:     extracted,
-		SHA256:             actualSHA256,
-		ExpectedSHA256:     expectedSHA256,
-		SHA256Verified:     sha256Verified,
-		PlaintextTransport: pre.PlaintextTransport,
+		BytesDownloaded:     progress.read,
+		Duration:            dur,
+		DurationMs:          dur.Milliseconds(),
+		MD5Verified:         verified,
+		VerificationSkipped: opts.NoVerify,
+		ExpectedMD5:         expectedMD5,
+		ActualMD5:           actualMD5,
+		ExtractedTo:         opts.DestDir,
+		FilesExtracted:      extracted,
+		SHA256:              actualSHA256,
+		ExpectedSHA256:      expectedSHA256,
+		SHA256Verified:      sha256Verified,
+		PlaintextTransport:  pre.PlaintextTransport,
 	}, nil
 }
 
@@ -591,6 +606,28 @@ type OverwriteError struct {
 }
 
 func (e *OverwriteError) Error() string { return e.Message }
+
+// VerificationUnavailableError is returned when integrity verification was
+// requested (the default) but the .md5sum sidecar could not be retrieved —
+// a 404 from the mirror, a transport failure, or any non-200 status. It is
+// deliberately fatal: nothing is extracted. A chain database is the state a
+// node serves to dApps, exchanges and explorers, so "couldn't check" must
+// never silently degrade to "shipped it anyway".
+//
+// The operator's escape hatch is DownloadOptions.NoVerify (`--no-verify`
+// on the CLI, `no_verify: true` on the MCP tool).
+type VerificationUnavailableError struct {
+	URL string // the .md5sum URL we failed to fetch
+	Err error  // underlying transport / status error
+}
+
+func (e *VerificationUnavailableError) Error() string {
+	return fmt.Sprintf("cannot verify snapshot integrity: %s is unavailable (%v); "+
+		"refusing to extract an unverified chain database — re-run with --no-verify "+
+		"to accept the risk deliberately", e.URL, e.Err)
+}
+
+func (e *VerificationUnavailableError) Unwrap() error { return e.Err }
 
 // Helpers ----------------------------------------------------------------
 

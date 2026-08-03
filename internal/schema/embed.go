@@ -113,7 +113,13 @@ import (
 //	        inferring it, and pin an out-of-band digest via `--sha256` /
 //	        the MCP `sha256` arg. One existing schema, additive optional
 //	        fields only — PATCH.
-const SchemaVersion = "1.12.4"
+//	1.12.5 — snapshot-download output gains `verification_skipped`. A
+//	        missing or unfetchable `.md5sum` sidecar is now a hard error
+//	        (`VERIFICATION_UNAVAILABLE`) rather than a silent skip, so
+//	        `md5_verified: false` on a successful download means one
+//	        thing only: the operator passed `--no-verify` / `no_verify`.
+//	        One existing schema, one additive optional field — PATCH.
+const SchemaVersion = "1.12.5"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so

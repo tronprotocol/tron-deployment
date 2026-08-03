@@ -36,8 +36,10 @@ var downloadCmd = &cobra.Command{
 	Short: "Stream a snapshot tarball into a local directory",
 	Long: `Download a chain database snapshot, streaming the tarball through
 gunzip + tar so the .tgz is never persisted to disk. Verifies the
-upstream MD5 sidecar (when published), pre-checks free disk space, and
-refuses to overwrite an existing database without --force.
+upstream MD5 sidecar — if the sidecar cannot be fetched the download
+aborts rather than extracting unchecked data, unless you pass
+--no-verify. Also pre-checks free disk space and refuses to overwrite an
+existing database without --force.
 
 The default destination is ./output-directory under the current working
 directory — same convention as the official tron-docker tooling. Pass
@@ -77,7 +79,7 @@ func init() {
 	downloadCmd.Flags().StringVar(&dlDest, "to", "", "Destination directory (default ./output-directory)")
 	downloadCmd.Flags().StringVar(&dlNode, "node", "", "Managed node name; resolves --to from state")
 	downloadCmd.Flags().BoolVar(&dlForce, "force", false, "Overwrite existing database in destination")
-	downloadCmd.Flags().BoolVar(&dlNoVerify, "no-verify", false, "Skip MD5 verification (not recommended)")
+	downloadCmd.Flags().BoolVar(&dlNoVerify, "no-verify", false, "Extract without checking the MD5 sidecar (UNSAFE; otherwise a missing sidecar aborts the download)")
 	downloadCmd.Flags().StringVar(&dlSHA256, "sha256", "",
 		"Expected SHA-256 of the tarball, obtained out of band (64 hex chars). "+
 			"Unlike the upstream .md5sum — which travels the same channel as the "+
@@ -181,6 +183,15 @@ func runDownload(cmd *cobra.Command, _ []string) error {
 		if errors.As(err, &ow) {
 			return output.NewError("HUMAN_REQUIRED", output.ExitHumanRequired, ow.Error())
 		}
+		var vu *snapshot.VerificationUnavailableError
+		if errors.As(err, &vu) {
+			return output.NewError("VERIFICATION_UNAVAILABLE", output.ExitGeneralError, vu.Error()).
+				WithSuggestions(
+					"Retry — the sidecar may be published a few minutes after the tarball, or the mirror may be briefly unhealthy",
+					fmt.Sprintf("Pick another backup: trond snapshot list --network %s", src.Network),
+					"Only if you accept an unauthenticated chain database: re-run with --no-verify",
+				)
+		}
 		return output.NewError("DOWNLOAD_ERROR", output.ExitGeneralError, err.Error())
 	}
 
@@ -193,8 +204,11 @@ func runDownload(cmd *cobra.Command, _ []string) error {
 		humanGB(uint64(res.BytesDownloaded)), res.Duration.Round(time.Second), res.FilesExtracted, dest)
 	if res.MD5Verified {
 		fmt.Fprint(cmd.OutOrStdout(), " (md5 ✓)")
-	} else if !dlNoVerify {
-		fmt.Fprint(cmd.OutOrStdout(), " (md5 sidecar absent — not verified)")
+	} else {
+		// Only reachable with --no-verify: without it, a sidecar that is
+		// missing or unfetchable aborts the download rather than landing
+		// an unchecked chain database here.
+		fmt.Fprint(cmd.OutOrStdout(), " (NOT VERIFIED — --no-verify was passed; this chain database is unauthenticated)")
 	}
 	if res.SHA256Verified {
 		fmt.Fprint(cmd.OutOrStdout(), " (sha256 pin ✓)")
@@ -225,11 +239,14 @@ func downloadPayload(src *snapshot.Source, backup, dest string, res *snapshot.Do
 		"bytes_downloaded": res.BytesDownloaded,
 		"duration_ms":      res.DurationMs,
 		"md5_verified":     res.MD5Verified,
-		"actual_md5":       res.ActualMD5,
-		"files_extracted":  res.FilesExtracted,
-		"userdata_present": pre.UserdataPresent,
-		"sha256":           res.SHA256,
-		"sha256_verified":  res.SHA256Verified,
+		// Distinguishes "checked and good" from "deliberately unchecked":
+		// a missing sidecar is now an error, never a silent skip.
+		"verification_skipped": res.VerificationSkipped,
+		"actual_md5":           res.ActualMD5,
+		"files_extracted":      res.FilesExtracted,
+		"userdata_present":     pre.UserdataPresent,
+		"sha256":               res.SHA256,
+		"sha256_verified":      res.SHA256Verified,
 		// The cleartext-transport fact has to reach agents that read
 		// stdout only and never see the stderr warning.
 		"plaintext_transport": res.PlaintextTransport,
@@ -270,6 +287,10 @@ func emitPlan(outputFmt string, src *snapshot.Source, backup, dest string, pre *
 	fmt.Printf("  transport:        %s\n", transportLabel(pre.PlaintextTransport))
 	if pre.PlaintextTransport {
 		fmt.Print(snapshot.PlaintextWarning(pre.URL, dlSHA256 != ""))
+	}
+	if !pre.HasMD5Sidecar {
+		fmt.Println("  WARNING: the sidecar did not answer this probe — the download will")
+		fmt.Println("           refuse to extract unverified data unless you pass --no-verify.")
 	}
 	if pre.WouldOverwrite {
 		fmt.Println("  WARNING: existing database would be overwritten (use --force).")

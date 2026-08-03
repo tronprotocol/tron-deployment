@@ -2,9 +2,11 @@ package snapshot
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -263,12 +265,18 @@ func tinyTGZ(t *testing.T) []byte {
 	return buildTGZ(t, map[string]string{"output-directory/database/CURRENT": "ok"})
 }
 
-// startTinyMirror serves the tiny tarball (no .md5sum sidecar) over plain
-// HTTP or TLS depending on tlsMode, so the scheme-dependent behaviour can
-// be exercised with the same fixture.
+// startTinyMirror serves the tiny tarball and a matching .md5sum sidecar
+// over plain HTTP or TLS depending on tlsMode, so the scheme-dependent
+// behaviour can be exercised with the same fixture.
+//
+// The sidecar is served for real because a missing one is now a hard
+// error (VERIFICATION_UNAVAILABLE) rather than a silent skip — these
+// tests are about transport disclosure and the --sha256 pin, so they
+// need the download to reach completion.
 func startTinyMirror(t *testing.T, tlsMode bool) *httptest.Server {
 	t.Helper()
 	tgz := tinyTGZ(t)
+	sum := fmt.Sprintf("%x  LiteFullNode_output-directory.tgz\n", md5.Sum(tgz))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/backup20250101/LiteFullNode_output-directory.tgz",
@@ -280,7 +288,7 @@ func startTinyMirror(t *testing.T, tlsMode bool) *httptest.Server {
 		})
 	mux.HandleFunc("/backup20250101/LiteFullNode_output-directory.tgz.md5sum",
 		func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(sum))
 		})
 
 	if !tlsMode {

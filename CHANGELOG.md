@@ -246,6 +246,14 @@ The agent-ergonomics arc lands across four sequenced PRs:
   download. Existing MD5 behaviour, verification ordering, and disk
   headroom are unchanged. Schema `1.12.2` → `1.12.3` (additive optional
   fields on one schema).
+- `snapshot download` fails closed on integrity: the `.md5sum` sidecar is
+  always fetched (a preflight HEAD no longer decides whether to verify),
+  and a 404 / transport failure aborts with `VERIFICATION_UNAVAILABLE`
+  (exit 1) instead of silently extracting an unverified chain database.
+  `--no-verify` (MCP `snapshot_download` gains `no_verify`, previously
+  absent) is the only way to skip the check; results carry
+  `verification_skipped` so `md5_verified: false` can no longer be read
+  as "the mirror had no sidecar". Schema 1.12.2 → 1.12.3
 
 ## [0.1.0-alpha] — 2026-XX-XX
 
