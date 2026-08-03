@@ -233,12 +233,15 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 	// skip this and clear ExpectedMD5.
 	expectedMD5 := ""
 	if !opts.NoVerify && pre.HasMD5Sidecar {
-		md5Body, err := fetchSmall(ctx, client, MD5URL(opts.Source, opts.Backup, opts.Kind))
+		md5URL := MD5URL(opts.Source, opts.Backup, opts.Kind)
+		md5Body, err := fetchSmall(ctx, client, md5URL)
 		if err != nil {
 			return nil, fmt.Errorf("fetch md5 sidecar: %w", err)
 		}
-		// Sidecar format is "<hex>  <filename>"; we only need the hex.
-		expectedMD5 = strings.TrimSpace(strings.Fields(string(md5Body))[0])
+		expectedMD5, err = parseMD5Sidecar(md5Body, md5URL)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	start := time.Now()
@@ -481,6 +484,47 @@ func fetchSmall(ctx context.Context, client *http.Client, url string) ([]byte, e
 	}
 	// 4 KB is a generous ceiling for an .md5sum sidecar.
 	return io.ReadAll(io.LimitReader(resp.Body, 4096))
+}
+
+// md5HexLen is the length of a hex-encoded MD5 digest.
+const md5HexLen = 32
+
+// parseMD5Sidecar pulls the hex digest out of a coreutils-style sidecar
+// body ("<digest>  <filename>", the form the live mirrors publish; a
+// bare digest is also accepted).
+//
+// The body comes off the network — mainnet mirrors are plain http:// —
+// so every shape is possible: an empty file, a whitespace-only file, an
+// HTML error page from an interception proxy, a truncated digest. Each
+// is reported as an error naming the sidecar URL rather than being
+// indexed blindly (an empty body used to panic here) and rather than
+// yielding an empty digest: Download reads an empty expectedMD5 as
+// "verification disabled", so degrading to one would silently turn a
+// corrupt sidecar into a skipped integrity check.
+func parseMD5Sidecar(body []byte, url string) (string, error) {
+	fields := strings.Fields(string(body))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("malformed md5 sidecar at %s: empty body", url)
+	}
+	digest := fields[0]
+	if len(digest) != md5HexLen {
+		return "", fmt.Errorf("malformed md5 sidecar at %s: expected a %d-character hex digest, got %q (%d chars)",
+			url, md5HexLen, elide(digest), len(digest))
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return "", fmt.Errorf("malformed md5 sidecar at %s: digest %q is not hexadecimal", url, digest)
+	}
+	return digest, nil
+}
+
+// elide caps an untrusted value quoted into an error message; the
+// sidecar body can be up to the fetchSmall limit on a single "field".
+func elide(s string) string {
+	const max = 48
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
 }
 
 func databasePath(destDir string) string {
