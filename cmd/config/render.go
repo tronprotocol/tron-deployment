@@ -50,6 +50,12 @@ type renderedNode struct {
 	Compose  string `json:"compose,omitempty"`
 	Systemd  string `json:"systemd,omitempty"`
 	JVMArgs  string `json:"jvm_args"`
+	// Redacted marks a node whose witness private key was replaced by
+	// a `<REDACTED:ENV_NAME>` placeholder in HOCON. The rendered config
+	// is then a PREVIEW: java-tron rejects the placeholder, so the file
+	// written by --output-dir must not be deployed as-is. Deploy with
+	// `trond apply`, which inlines the real key without printing it.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 func runRender(cmd *cobra.Command, args []string) error {
@@ -71,15 +77,23 @@ func runRender(cmd *cobra.Command, args []string) error {
 	templateDir := findTemplateDir()
 
 	rendered := make([]renderedNode, 0, len(parsed.Nodes))
+	anyRedacted := false
 
 	for i, node := range parsed.Nodes {
 		if renderNodeFilter >= 0 && i != renderNodeFilter {
 			continue
 		}
-		// Render HOCON config
-		hocon, err := render.RenderHOCON(templateDir, parsed, &node)
+		// Render HOCON config. This is a PREVIEW surface — the result
+		// is printed to stdout, inlined into the JSON payload and
+		// written to --output-dir — so we take the redacted display
+		// form, never the deployable one.
+		r, err := render.RenderHOCONWithSecrets(templateDir, parsed, &node)
 		if err != nil {
 			return output.NewError("RENDER_ERROR", output.ExitGeneralError, err.Error())
+		}
+		hocon := r.Config
+		if r.Redacted {
+			anyRedacted = true
 		}
 
 		// Render JVM args. Without a live target we can't probe JDK or real
@@ -109,6 +123,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 			Compose:  composeYAML,
 			Systemd:  systemdUnit,
 			JVMArgs:  jvmArgs,
+			Redacted: r.Redacted,
 		})
 
 		// --output-dir is an explicit "write to disk" request — we
@@ -126,12 +141,31 @@ func runRender(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// A redacted render is a preview, not a deployable artifact:
+	// java-tron rejects the `<REDACTED:...>` placeholder. Say so on
+	// stderr (which never mixes with the stdout payload) so an operator
+	// or agent piping render → docker compose up isn't left wondering
+	// why the witness refuses to sign.
+	if anyRedacted {
+		fmt.Fprintln(os.Stderr,
+			"warning: witness private key redacted from the rendered config — "+
+				"this output is a PREVIEW and java-tron will reject it. "+
+				"Use `trond apply` to deploy, which inlines the real key without printing it.")
+	}
+
 	if outputFmt == "json" {
-		return output.WriteJSON(os.Stdout, map[string]any{
+		payload := map[string]any{
 			"name":    parsed.Name,
 			"network": parsed.Network,
 			"nodes":   rendered,
-		})
+		}
+		if anyRedacted {
+			// Machine-readable twin of the stderr warning, so agents
+			// parsing only stdout still see that the artifact is a
+			// preview.
+			payload["redacted"] = true
+		}
+		return output.WriteJSON(os.Stdout, payload)
 	}
 
 	if renderOutputDir != "" {

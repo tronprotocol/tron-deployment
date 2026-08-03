@@ -75,10 +75,14 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 		return errResult(err)
 	}
 
-	desired, err := render.RenderHOCON("", parsed, &parsed.Nodes[0])
+	// Compare against the REAL bytes so a rotated witness key still
+	// registers as drift; mcpLineDiff redacts every line it emits, so
+	// nothing secret leaves over the MCP transport.
+	renderedDesired, err := render.RenderHOCONWithSecrets("", parsed, &parsed.Nodes[0])
 	if err != nil {
 		return errResult(err)
 	}
+	desired := renderedDesired.Deployable()
 
 	diffs := mcpLineDiff(live, desired, args.Context)
 	return jsonResult(map[string]any{
@@ -93,7 +97,12 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 	})
 }
 
-// mcpLineDiff mirrors cmd.lineDiff. Same simplicity rationale.
+// mcpLineDiff mirrors cmd.lineDiff. Same simplicity rationale — and
+// the same secret handling: comparison on the raw lines, every emitted
+// line (including --context neighbours) through
+// render.RedactWitnessLine. This result is returned to a third-party
+// model provider, so an un-redacted `localwitness` line here is the
+// worst-case disclosure path in the whole tool surface.
 func mcpLineDiff(live, desired string, ctxLines int) []string {
 	a := strings.Split(strings.TrimRight(live, "\n"), "\n")
 	b := strings.Split(strings.TrimRight(desired, "\n"), "\n")
@@ -120,18 +129,18 @@ func mcpLineDiff(live, desired string, ctxLines int) []string {
 			}
 			for j := lo; j < i; j++ {
 				if j < len(a) {
-					diffs = append(diffs, "  "+a[j])
+					diffs = append(diffs, "  "+render.RedactWitnessLine(a[j]))
 				}
 			}
 		}
 		switch {
 		case i < len(a) && i >= len(b):
-			diffs = append(diffs, "- "+aLine)
+			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine))
 		case i >= len(a) && i < len(b):
-			diffs = append(diffs, "+ "+bLine)
+			diffs = append(diffs, "+ "+render.RedactWitnessLine(bLine))
 		default:
-			diffs = append(diffs, "- "+aLine)
-			diffs = append(diffs, "+ "+bLine)
+			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine))
+			diffs = append(diffs, "+ "+render.RedactWitnessLine(bLine))
 		}
 	}
 	return diffs

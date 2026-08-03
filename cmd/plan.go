@@ -80,10 +80,15 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	templateDir := findTemplatesDir()
 	node := &parsed.Nodes[0]
 
-	hoconConfig, err := render.RenderHOCON(templateDir, parsed, node)
+	rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)
 	if err != nil {
 		return exitWithError("RENDER_ERROR", output.ExitGeneralError, err.Error())
 	}
+	// The REAL bytes: config_hash must match what apply deploys, and the
+	// diff below must compare real values so a rotated witness key is
+	// still detected. Nothing from here reaches the output un-redacted —
+	// simpleHOCONDiff redacts every line at the point it emits it.
+	hoconConfig := rendered.Deployable()
 	configHash := apply.IntentHashFromBytes([]byte(hoconConfig))
 
 	// 5. Diff
@@ -186,6 +191,14 @@ func runPlan(cmd *cobra.Command, args []string) error {
 // shape as cmd/config/diff.go::simpleDiff but private to plan to
 // avoid coupling — both could call into a shared internal/diff
 // helper later if a third caller appears.
+//
+// Secret handling: the comparison runs on the raw lines (so a witness
+// key that actually changed is still reported as drift), but every
+// line is passed through render.RedactWitnessLine before it is
+// emitted. This differ is positional and LCS-free, so a line-count
+// change anywhere above the `localwitness` assignment misaligns the
+// tail and would otherwise push the SR private key straight into
+// stdout and into result["config_diff"].
 func simpleHOCONDiff(old, new []string) []string {
 	var diffs []string
 	maxLen := len(old)
@@ -202,10 +215,10 @@ func simpleHOCONDiff(old, new []string) []string {
 		}
 		if oldLine != newLine {
 			if oldLine != "" {
-				diffs = append(diffs, "- "+oldLine)
+				diffs = append(diffs, "- "+render.RedactWitnessLine(oldLine))
 			}
 			if newLine != "" {
-				diffs = append(diffs, "+ "+newLine)
+				diffs = append(diffs, "+ "+render.RedactWitnessLine(newLine))
 			}
 		}
 	}

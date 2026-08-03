@@ -34,7 +34,7 @@ func registerConfigTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "config_render",
 		Title:       "Render intent to HOCON + compose/systemd",
-		Description: "Render the intent.yaml into the final java-tron HOCON config plus the compose / systemd file that would be written. Useful for previewing what apply would produce. Equivalent to `trond config render <path> -o json`.",
+		Description: "Render the intent.yaml into the final java-tron HOCON config plus the compose / systemd file that would be written. Useful for previewing what apply would produce. A witness node's private key is never returned — it is replaced by a `<REDACTED:ENV_NAME>` placeholder and `redacted: true` is set, so the HOCON is a preview java-tron would reject; deploy with the apply tool instead. Equivalent to `trond config render <path> -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, renderTool)
 }
@@ -70,6 +70,7 @@ func renderTool(ctx context.Context, _ *mcp.CallToolRequest, args renderArg) (*m
 	templateDir := ""
 
 	rendered := make([]map[string]any, 0, len(parsed.Nodes))
+	anyRedacted := false
 	for i := range parsed.Nodes {
 		// args.Node uses 0 for "all" (default); 1-based index for filter.
 		// So args.Node=2 → render only the second node (i=1).
@@ -77,7 +78,10 @@ func renderTool(ctx context.Context, _ *mcp.CallToolRequest, args renderArg) (*m
 			continue
 		}
 		node := &parsed.Nodes[i]
-		hocon, err := render.RenderHOCON(templateDir, parsed, node)
+		// Preview surface returned to the MCP client (and therefore to
+		// a third-party model provider): take the redacted display
+		// form, never the deployable one.
+		r, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)
 		if err != nil {
 			return errResult(err)
 		}
@@ -91,8 +95,14 @@ func renderTool(ctx context.Context, _ *mcp.CallToolRequest, args renderArg) (*m
 			"index":    i,
 			"name":     parsed.Name,
 			"type":     node.Type,
-			"hocon":    hocon,
+			"hocon":    r.Config,
 			"jvm_args": jvmArgs,
+		}
+		if r.Redacted {
+			// Flags the HOCON as a preview: the witness key was
+			// replaced by a placeholder java-tron will reject.
+			row["redacted"] = true
+			anyRedacted = true
 		}
 		runtime := parsed.Target.Runtime
 		if runtime == "" {
@@ -106,9 +116,13 @@ func renderTool(ctx context.Context, _ *mcp.CallToolRequest, args renderArg) (*m
 		}
 		rendered = append(rendered, row)
 	}
-	return jsonResult(map[string]any{
+	payload := map[string]any{
 		"name":    parsed.Name,
 		"network": parsed.Network,
 		"nodes":   rendered,
-	})
+	}
+	if anyRedacted {
+		payload["redacted"] = true
+	}
+	return jsonResult(payload)
 }

@@ -3,10 +3,12 @@ package render
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
+	"github.com/tronprotocol/tron-deployment/internal/security"
 )
 
 // NetworkTemplate maps network names to their base config template file.
@@ -14,6 +16,117 @@ var NetworkTemplate = map[string]string{
 	"mainnet": "main_net_config.conf",
 	"nile":    "test_net_config.conf",
 	"private": "private_net_config.conf",
+}
+
+// witnessKeyName is the exact java-tron config key that carries the
+// super-representative signing key.
+const witnessKeyName = "localwitness"
+
+// redactedWitnessAssignment is what every text / JSON / diff surface
+// prints in place of a `localwitness` assignment.
+const redactedWitnessAssignment = witnessKeyName + ` = ["<REDACTED>"]`
+
+// Rendered carries a rendered java-tron HOCON config in two forms.
+//
+// Config is the DISPLAY form and is the only one safe to print to
+// stdout, serialise into JSON, hand to an MCP client or write into a
+// diff: a resolved witness (SR) private key has been replaced by a
+// `<REDACTED:ENV_NAME>` placeholder. The placeholder names only the
+// environment variable, which is already public in the intent file.
+//
+// The DEPLOY form — the byte stream java-tron actually needs, with the
+// real key inlined — is unexported and reachable only through
+// Deployable(). Keeping it unexported means the secret cannot escape
+// through an accidental fmt / encoding-json / log call: a caller has
+// to spell out Deployable() to obtain it.
+type Rendered struct {
+	// Config is the redacted display form. Byte-identical to the
+	// deploy form whenever no witness private key was resolved.
+	Config string
+
+	// WitnessKey holds the resolved witness private key, wrapped so
+	// String / MarshalJSON / MarshalText all render "[REDACTED]".
+	// Zero value when the node is not a witness, uses a keystore, or
+	// the referenced env var is unset.
+	WitnessKey security.PrivateKey
+
+	// Redacted reports whether Config had a real witness private key
+	// removed from it — i.e. whether Config is a preview that
+	// java-tron would reject rather than a deployable artifact.
+	Redacted bool
+
+	// deploy is the real config bytes. Unexported on purpose.
+	deploy string
+}
+
+// Deployable returns the config bytes to hand to runtime.Deploy (and
+// to hash for idempotency). This is the ONLY accessor that yields the
+// real witness private key; every caller that prints, serialises or
+// diffs the result must use Config instead.
+func (r Rendered) Deployable() string { return r.deploy }
+
+// String returns the redacted display form so that %v / %s / %+v on a
+// Rendered can never spill the key. Without this, fmt would reflect
+// over the unexported deploy field and print the secret verbatim.
+func (r Rendered) String() string { return r.Config }
+
+// GoString keeps %#v away from the deploy field for the same reason.
+func (r Rendered) GoString() string {
+	return fmt.Sprintf("render.Rendered{Config: %q, Redacted: %t}", r.Config, r.Redacted)
+}
+
+// IsWitnessKeyLine reports whether one line of HOCON is the
+// `localwitness = ...` assignment that carries the SR signing key.
+//
+// The match is a deliberately stateless, exact single-line key match:
+// the line is trimmed, must begin with the literal key `localwitness`,
+// and the next non-blank character must be `=`. No state is carried
+// between lines and no bracket / quote scanning is done, so the
+// predicate is safe to apply to any line of any config in any order.
+// `localwitnesskeystore` (a file path) and `localWitnessAccountAddress`
+// (a public address) both fail the match, which is what we want.
+//
+// Known limits, accepted deliberately: a key sitting on a CONTINUATION
+// line of a hand-written multi-line block
+//
+//	localwitness = [
+//	  <key>
+//	]
+//
+// or inside a commented-out line is not matched. Detecting those needs
+// a stateful, delimiter-scanning parser over the whole file, which is
+// exactly the fragile machinery this fix is required to avoid. trond
+// itself only ever renders the single-line form, so every config trond
+// produces is fully covered.
+func IsWitnessKeyLine(line string) bool {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(line), witnessKeyName)
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimLeft(rest, " \t"), "=")
+}
+
+// RedactWitnessLine returns line unchanged unless it is a witness
+// private-key assignment, in which case the entire assignment is
+// replaced by a fixed marker that carries no key material.
+//
+// Every surface that emits raw config lines — the `plan --diff`,
+// `config diff`, `verify-config` and MCP verify_config differs — runs
+// each line through this immediately before emitting it. Comparison
+// still happens on the raw lines, so a rotated or drifted key is still
+// reported as a change; the reader just sees the marker on both sides
+// instead of the two keys.
+//
+// Over-inclusive by design: a bare `localwitness = [` opening line
+// (the shape the shipped templates use) is also rewritten. That costs
+// nothing but a slightly blunter diff line and keeps us on the safe
+// side of any unquoted / oddly-spaced value an operator may have
+// hand-written into a live conf.
+func RedactWitnessLine(line string) string {
+	if !IsWitnessKeyLine(line) {
+		return line
+	}
+	return lineIndent(line) + redactedWitnessAssignment
 }
 
 // RenderHOCON loads the base template for the network and applies intent-driven overrides.
@@ -32,10 +145,28 @@ var NetworkTemplate = map[string]string{
 // Two layers exist because some keys (ports) need to stay in their original
 // place to keep the file diff-friendly, while bulk overrides are simpler
 // and safer to express as a final-section append.
+//
+// RenderHOCON returns the DISPLAY form (see Rendered): any resolved
+// witness private key is replaced by a `<REDACTED:ENV_NAME>`
+// placeholder, because this string ends up on stdout, in JSON payloads
+// and in MCP tool results. Callers that need the deployable bytes must
+// use RenderHOCONWithSecrets and ask for Deployable().
 func RenderHOCON(templateDir string, i *intent.Intent, node *intent.NodeSpec) (string, error) {
-	data, err := LoadTemplate(templateDir, i.Network)
+	r, err := RenderHOCONWithSecrets(templateDir, i, node)
 	if err != nil {
 		return "", err
+	}
+	return r.Config, nil
+}
+
+// RenderHOCONWithSecrets renders the same config as RenderHOCON but
+// returns both forms: Rendered.Config for anything that is printed,
+// serialised or diffed, and Rendered.Deployable() for the bytes handed
+// to runtime.Deploy and hashed into config_hash.
+func RenderHOCONWithSecrets(templateDir string, i *intent.Intent, node *intent.NodeSpec) (Rendered, error) {
+	data, err := LoadTemplate(templateDir, i.Network)
+	if err != nil {
+		return Rendered{}, err
 	}
 
 	config := string(data)
@@ -50,31 +181,57 @@ func RenderHOCON(templateDir string, i *intent.Intent, node *intent.NodeSpec) (s
 	}
 
 	// 2. Trailing override block (network_overrides + witness_key + config_overrides).
-	if appendix := renderHOCONAppendix(node); appendix != "" {
-		if !strings.HasSuffix(config, "\n") {
-			config += "\n"
-		}
-		config += "\n" + appendix
+	ap := renderHOCONAppendix(node)
+	if ap.deploy == "" {
+		// Nothing appended: both forms are the same bytes.
+		return Rendered{Config: config, deploy: config}, nil
 	}
-
-	return config, nil
+	if !strings.HasSuffix(config, "\n") {
+		config += "\n"
+	}
+	return Rendered{
+		Config:     config + "\n" + ap.display,
+		WitnessKey: ap.key,
+		Redacted:   ap.redacted,
+		deploy:     config + "\n" + ap.deploy,
+	}, nil
 }
 
-// renderHOCONAppendix produces the "trond overrides" block. Returns an
-// empty string when nothing is configured so the rendered HOCON stays
-// identical to today's output for users who don't use the new fields.
+// hoconAppendix is the "trond overrides" block in its two forms. The
+// two differ in at most one line — the `localwitness` assignment.
+type hoconAppendix struct {
+	deploy   string
+	display  string
+	key      security.PrivateKey
+	redacted bool
+}
+
+// renderHOCONAppendix produces the "trond overrides" block. Returns the
+// zero hoconAppendix (empty forms) when nothing is configured so the
+// rendered HOCON stays identical to today's output for users who don't
+// use the new fields.
 //
 // Witness-key handling: java-tron parses HOCON via typesafe-config but
 // does NOT enable environment-variable substitution — `${VAR}` is treated
 // as an internal config-reference and fails when the referenced key
 // doesn't exist (the witness silently shuts down with "private key must
 // be 64 hex string, actual: 9", that 9 being the literal length of
-// `${SR_KEY}`). So we inline the env value at render time. The resulting
-// .conf file holds the secret in cleartext; we protect it via the
-// existing 0600 perms on the deployment dir and don't echo it back to
-// stdout.
-func renderHOCONAppendix(node *intent.NodeSpec) string {
+// `${SR_KEY}`). So we inline the env value at render time.
+//
+// The inlined secret goes ONLY into the deploy form. The display form
+// gets a `<REDACTED:ENV_NAME>` placeholder, so the string that trond
+// prints, JSON-encodes and returns over MCP never carries the key —
+// only the env var's name, which the intent file already states in
+// cleartext.
+func renderHOCONAppendix(node *intent.NodeSpec) hoconAppendix {
 	var lines []string
+
+	// Index of the `localwitness` line inside lines, and the redacted
+	// replacement for it. -1 means "no secret was inlined", in which
+	// case both rendered forms are the same bytes.
+	witnessIdx := -1
+	witnessDisplayLine := ""
+	var witnessKey security.PrivateKey
 
 	// --- network_overrides ---
 	no := &node.NetworkOverrides
@@ -127,9 +284,15 @@ func renderHOCONAppendix(node *intent.NodeSpec) string {
 			// silently rendering an empty key.
 			val := os.Getenv(envName)
 			if val == "" {
-				val = "<UNSET:" + envName + ">"
+				// No secret to protect: the loud placeholder is
+				// identical in both forms, exactly as before.
+				lines = append(lines, fmt.Sprintf(`%s = [%q]`, witnessKeyName, "<UNSET:"+envName+">"))
+				break
 			}
-			lines = append(lines, fmt.Sprintf(`localwitness = [%q]`, val))
+			witnessKey = security.NewPrivateKey(val)
+			witnessIdx = len(lines)
+			witnessDisplayLine = fmt.Sprintf(`%s = [%q]`, witnessKeyName, "<REDACTED:"+envName+">")
+			lines = append(lines, fmt.Sprintf(`%s = [%q]`, witnessKeyName, val))
 		case keystore != "":
 			lines = append(lines, fmt.Sprintf("localwitnesskeystore = [%q]", keystore))
 		}
@@ -151,9 +314,27 @@ func renderHOCONAppendix(node *intent.NodeSpec) string {
 	}
 
 	if len(lines) == 0 {
-		return ""
+		return hoconAppendix{}
 	}
 
+	deploy := joinAppendixLines(lines)
+	if witnessIdx < 0 {
+		return hoconAppendix{deploy: deploy, display: deploy}
+	}
+	displayLines := slices.Clone(lines)
+	displayLines[witnessIdx] = witnessDisplayLine
+	return hoconAppendix{
+		deploy:   deploy,
+		display:  joinAppendixLines(displayLines),
+		key:      witnessKey,
+		redacted: true,
+	}
+}
+
+// joinAppendixLines wraps the override lines in the block header. Split
+// out so the deploy and display forms are assembled by identical code —
+// they must not drift in anything but the witness line.
+func joinAppendixLines(lines []string) string {
 	var sb strings.Builder
 	sb.WriteString("# === trond overrides (last-write-wins) ===\n")
 	for _, l := range lines {

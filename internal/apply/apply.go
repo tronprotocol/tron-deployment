@@ -228,10 +228,14 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		return noChangeResult(opts, buildSummary, start), nil
 	}
 
-	hocon, err := render.RenderHOCON(opts.TemplateDir, opts.Intent, node)
+	rendered, err := render.RenderHOCONWithSecrets(opts.TemplateDir, opts.Intent, node)
 	if err != nil {
 		return nil, fmt.Errorf("render hocon: %w", err)
 	}
+	// Deploy path: java-tron needs the real witness key inlined, and
+	// config_hash must stay computed over those same bytes so
+	// idempotency is unaffected by redaction on the preview paths.
+	hocon := rendered.Deployable()
 	configHash := sha256hex([]byte(hocon))
 
 	jdk := opts.JDKVersion

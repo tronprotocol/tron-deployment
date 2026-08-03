@@ -39,10 +39,14 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	templateDir := findTemplateDir()
 	node := &parsed.Nodes[0]
 
-	newConfig, err := render.RenderHOCON(templateDir, parsed, node)
+	rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)
 	if err != nil {
 		return output.NewError("RENDER_ERROR", output.ExitGeneralError, err.Error())
 	}
+	// Compare the REAL bytes against the deployed file so a rotated
+	// witness key still shows up as a difference; simpleDiff redacts
+	// each line as it emits it, so no key reaches stdout or the JSON.
+	newConfig := rendered.Deployable()
 
 	// Load deployed config from state
 	store, err := state.NewStore(paths.State())
@@ -110,6 +114,13 @@ func runDiff(cmd *cobra.Command, args []string) error {
 }
 
 // simpleDiff does a basic line-by-line comparison.
+//
+// Secret handling: comparison uses the raw lines so genuine drift is
+// still reported, but every emitted line goes through
+// render.RedactWitnessLine first. The comparison is positional and
+// LCS-free, so any line-count change above the `localwitness`
+// assignment misaligns the tail and would otherwise print the SR
+// private key into `diffs[]`.
 func simpleDiff(old, new []string) []string {
 	var diffs []string
 
@@ -128,10 +139,10 @@ func simpleDiff(old, new []string) []string {
 		}
 		if oldLine != newLine {
 			if oldLine != "" {
-				diffs = append(diffs, fmt.Sprintf("- %s", oldLine))
+				diffs = append(diffs, fmt.Sprintf("- %s", render.RedactWitnessLine(oldLine)))
 			}
 			if newLine != "" {
-				diffs = append(diffs, fmt.Sprintf("+ %s", newLine))
+				diffs = append(diffs, fmt.Sprintf("+ %s", render.RedactWitnessLine(newLine)))
 			}
 		}
 	}

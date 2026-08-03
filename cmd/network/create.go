@@ -131,10 +131,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	for i, node := range parsed.Nodes {
 		nodeName := fmt.Sprintf("%s-node%d", parsed.Name, i)
 
-		hocon, err := render.RenderHOCON(templateDir, parsed, &node)
+		rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, &node)
 		if err != nil {
 			return fmt.Errorf("render config for node %d: %w", i, err)
 		}
+		// Deploy path — needs the real witness key inlined.
+		hocon := rendered.Deployable()
 
 		memGB := render.ParseMemoryGB(node.Resources.Memory)
 		if memGB == 0 {

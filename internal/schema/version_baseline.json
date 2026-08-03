@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.12.2",
+  "schema_version": "1.12.3",
   "entries": [
     {
       "name": "apply",
@@ -31,7 +31,7 @@
     },
     {
       "name": "config-render",
-      "hash": "9a845732c24c2be1b0fa4f7945a530f8abf16dce8202d18f8940ee1e33f73e45"
+      "hash": "6d267c80d8feb29a29a98409f720b24d0833fb754973a74a40ef4777ed49b538"
     },
     {
       "name": "config-validate",

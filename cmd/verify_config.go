@@ -89,11 +89,15 @@ func runVerifyConfig(cmd *cobra.Command, args []string) error {
 			"Confirm the runtime: trond inspect "+name)
 	}
 
-	// Render what trond *would* produce from the current intent.
-	desired, err := render.RenderHOCON(findTemplatesDir(), parsed, &parsed.Nodes[0])
+	// Render what trond *would* produce from the current intent. The
+	// comparison runs against the REAL bytes (redacting here would make
+	// every witness node report permanent false drift against its live
+	// conf); lineDiff redacts each line as it emits it.
+	renderedDesired, err := render.RenderHOCONWithSecrets(findTemplatesDir(), parsed, &parsed.Nodes[0])
 	if err != nil {
 		return exitWithError("RENDER_ERROR", output.ExitGeneralError, err.Error())
 	}
+	desired := renderedDesired.Deployable()
 
 	diffs := lineDiff(live, desired, verifyConfigContext)
 	result := map[string]any{
@@ -152,6 +156,13 @@ func readLiveConfig(ctx context.Context, nc *nodeContext, name string) (string, 
 // of this output are agents that key off `in_sync`/`diff_count`,
 // not humans diffing big patches. The unified-diff formatting is
 // precise enough for the operator-friendly text path.
+//
+// Secret handling: BOTH sides carry the real witness key — `live` is
+// read off the deployed host and `desired` is the deployable render —
+// so every emitted line, including the --context neighbours (which are
+// emitted even when they match), is passed through
+// render.RedactWitnessLine. Comparison still uses the raw lines, so a
+// rotated key is still counted in diff_count and flips in_sync.
 func lineDiff(live, desired string, contextLines int) []string {
 	a := strings.Split(strings.TrimRight(live, "\n"), "\n")
 	b := strings.Split(strings.TrimRight(desired, "\n"), "\n")
@@ -181,17 +192,17 @@ func lineDiff(live, desired string, contextLines int) []string {
 			}
 			for j := lo; j < i; j++ {
 				if j < len(a) {
-					diffs = append(diffs, "  "+a[j])
+					diffs = append(diffs, "  "+render.RedactWitnessLine(a[j]))
 				}
 			}
 		}
 		switch {
 		case i < len(a) && i >= len(b):
-			diffs = append(diffs, "- "+aLine)
+			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine))
 		case i >= len(a) && i < len(b):
-			diffs = append(diffs, "+ "+bLine)
+			diffs = append(diffs, "+ "+render.RedactWitnessLine(bLine))
 		default:
-			diffs = append(diffs, "- "+aLine, "+ "+bLine)
+			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine), "+ "+render.RedactWitnessLine(bLine))
 		}
 	}
 	return diffs

@@ -8,6 +8,10 @@
   "properties": {
     "name":    { "type": "string" },
     "network": { "type": "string" },
+    "redacted": {
+      "type": "boolean",
+      "description": "Present and true when at least one node's witness private key was replaced by a `<REDACTED:ENV_NAME>` placeholder. The rendered HOCON is then a PREVIEW: java-tron rejects the placeholder, so files written by --output-dir must not be deployed as-is. Deploy with `trond apply`, which inlines the real key without printing it."
+    },
     "nodes": {
       "type": "array",
       "items": {
@@ -17,7 +21,8 @@
           "index":    { "type": "integer", "minimum": 0 },
           "name":     { "type": "string" },
           "type":     { "type": "string", "enum": ["fullnode", "witness", "solidity", "lite"] },
-          "hocon":    { "type": "string", "description": "Full rendered java-tron .conf contents." },
+          "hocon":    { "type": "string", "description": "Full rendered java-tron .conf contents. A witness node's private key is never included: it is replaced by a `<REDACTED:ENV_NAME>` placeholder and the node's `redacted` flag is set." },
+          "redacted": { "type": "boolean", "description": "Present and true when this node's witness private key was redacted from `hocon`." },
           "compose":  { "type": "string", "description": "Rendered docker-compose.yaml; empty for jar runtime." },
           "systemd":  { "type": "string", "description": "Rendered systemd unit file; empty for docker runtime." },
           "jvm_args": { "type": "string", "description": "Space-separated JVM args fed to FullNode -jvm." }

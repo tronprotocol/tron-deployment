@@ -98,7 +98,13 @@ import (
 //	        `metrics_port` so `network add` rebuilds scrape targets with
 //	        the node's real metrics port (instead of hardcoded 9527).
 //	        Additive optional fields throughout — PATCH.
-const SchemaVersion = "1.12.2"
+//	1.12.3 — config-render output gains `redacted` (top level and per
+//	        node). A witness node's private key is no longer inlined
+//	        into the rendered `hocon` a preview surface returns; it is
+//	        replaced by a `<REDACTED:ENV_NAME>` placeholder and the flag
+//	        tells the caller the artifact is a preview java-tron would
+//	        reject. Additive optional fields — PATCH.
+const SchemaVersion = "1.12.3"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so
