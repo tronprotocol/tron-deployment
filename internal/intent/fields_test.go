@@ -960,6 +960,70 @@ nodes:
 	}
 }
 
+func TestMonitoring_GrafanaExposeAndAdminPassword(t *testing.T) {
+	monitoringYAML := func(grafana string) []byte {
+		return []byte(fmt.Sprintf(`
+name: mon
+network: mainnet
+target: {type: local}
+monitoring:
+  enabled: true
+  grafana:
+%s
+nodes:
+  - type: fullnode
+`, grafana))
+	}
+
+	t.Run("defaults to not exposed", func(t *testing.T) {
+		i, err := Parse(monitoringYAML("    port: 3000"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i.Monitoring.Grafana.Expose {
+			t.Error("grafana.expose should default to false")
+		}
+		if i.Monitoring.Grafana.AdminPasswordEnv != "" {
+			t.Errorf("grafana.admin_password_env = %q, want empty",
+				i.Monitoring.Grafana.AdminPasswordEnv)
+		}
+	})
+
+	t.Run("expose with admin_password_env parses", func(t *testing.T) {
+		i, err := Parse(monitoringYAML("    expose: true\n    admin_password_env: GRAFANA_ADMIN_PASSWORD"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !i.Monitoring.Grafana.Expose {
+			t.Error("grafana.expose not parsed")
+		}
+		if i.Monitoring.Grafana.AdminPasswordEnv != "GRAFANA_ADMIN_PASSWORD" {
+			t.Errorf("grafana.admin_password_env = %q, want GRAFANA_ADMIN_PASSWORD",
+				i.Monitoring.Grafana.AdminPasswordEnv)
+		}
+	})
+
+	// Exposing Grafana on every interface with the image's default
+	// admin login is the combination this rejects.
+	t.Run("expose without admin_password_env rejected", func(t *testing.T) {
+		_, err := Parse(monitoringYAML("    expose: true"))
+		if err == nil {
+			t.Fatal("expected error for expose without admin_password_env")
+		}
+		if !strings.Contains(err.Error(), "admin_password_env") {
+			t.Errorf("error %q should name the missing field", err)
+		}
+	})
+
+	// The intent carries the env var NAME, never the password.
+	t.Run("literal password rejected", func(t *testing.T) {
+		_, err := Parse(monitoringYAML(`    admin_password_env: "hunter2 !"`))
+		if err == nil {
+			t.Fatal("expected error for a non-env-name admin_password_env")
+		}
+	})
+}
+
 func TestMonitoring_InvalidRetention(t *testing.T) {
 	cases := []string{"7", "days", "1.5d", "week"}
 	for _, val := range cases {

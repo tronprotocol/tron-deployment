@@ -641,7 +641,18 @@
           "type": "integer",
           "default": 3000,
           "minimum": 1024,
-          "maximum": 65535
+          "maximum": 65535,
+          "description": "Host port for Grafana. Bound to 127.0.0.1 unless \"expose\" is true."
+        },
+        "expose": {
+          "type": "boolean",
+          "default": false,
+          "description": "Publish the Grafana port on all host interfaces (0.0.0.0) instead of loopback only. Requires admin_password_env, because the grafana-oss image otherwise keeps its default admin login."
+        },
+        "admin_password_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "NAME of an environment variable holding the Grafana admin password (never the password itself). It must be set in the environment that runs docker compose; Grafana applies it when it first initialises its database."
         }
       }
     }

@@ -57,7 +57,11 @@ const monitoringComposeTmpl = `services:
         limits:
           memory: 2g
     ports:
-      - "{{.GrafanaPort}}:3000"
+      - "{{.GrafanaPortMapping}}"
+{{- if .GrafanaAdminPasswordRef }}
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD={{.GrafanaAdminPasswordRef}}
+{{- end }}
     volumes:
       - ./grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -81,24 +85,68 @@ var composeTmpl = template.Must(template.New("monitoring").Parse(monitoringCompo
 type monitoringComposeData struct {
 	Name           string
 	PrometheusPort int
-	GrafanaPort    int
-	Retention      string
-	NetworkName    string
+	// GrafanaPortMapping is the full compose "ports" entry for Grafana,
+	// including the host bind address — see grafanaPortMapping.
+	GrafanaPortMapping string
+	// GrafanaAdminPasswordRef is the compose interpolation reference that
+	// supplies GF_SECURITY_ADMIN_PASSWORD, or "" when the operator did
+	// not configure one.
+	GrafanaAdminPasswordRef string
+	Retention               string
+	NetworkName             string
 }
 
 // RenderMonitoringCompose generates a docker-compose.yaml for the
 // Prometheus + Grafana monitoring stack.
 func RenderMonitoringCompose(name string, i *intent.Intent, targets []MonitoringTarget, networkName string) string {
 	var buf bytes.Buffer
+	g := i.Monitoring.Grafana
 	data := monitoringComposeData{
-		Name:           name,
-		PrometheusPort: i.Monitoring.Prometheus.Port,
-		GrafanaPort:    i.Monitoring.Grafana.Port,
-		Retention:      i.Monitoring.Prometheus.Retention,
-		NetworkName:    networkName,
+		Name:                    name,
+		PrometheusPort:          i.Monitoring.Prometheus.Port,
+		GrafanaPortMapping:      grafanaPortMapping(g),
+		GrafanaAdminPasswordRef: grafanaAdminPasswordRef(g),
+		Retention:               i.Monitoring.Prometheus.Retention,
+		NetworkName:             networkName,
 	}
 	_ = composeTmpl.Execute(&buf, data)
 	return buf.String()
+}
+
+// grafanaPortMapping builds Grafana's compose "ports" entry.
+//
+// A bare "<port>:3000" publishes on 0.0.0.0, which on any host with a
+// permissive firewall exposes the dashboard — and Grafana's datasource
+// proxy — to the network with the grafana-oss image's default admin
+// login. Bind to loopback instead; reaching it from elsewhere is then an
+// SSH tunnel (or a reverse proxy the operator controls) away.
+//
+// monitoring.grafana.expose opts back into the host-wide bind, and is
+// only honoured together with an admin password: intent validation
+// rejects that combination up front, and this stays fail-closed for any
+// caller that renders an unvalidated intent.
+func grafanaPortMapping(g intent.GrafConfig) string {
+	if g.Expose && g.AdminPasswordEnv != "" {
+		return fmt.Sprintf("%d:3000", g.Port)
+	}
+	return fmt.Sprintf("127.0.0.1:%d:3000", g.Port)
+}
+
+// grafanaAdminPasswordRef returns the compose interpolation that feeds
+// GF_SECURITY_ADMIN_PASSWORD from the operator's environment, keeping the
+// secret out of the rendered file (the same shape composeEnvLines uses
+// for the witness keystore password).
+//
+// The ":?" form makes `docker compose up` fail loudly when the variable
+// is unset or empty rather than silently starting Grafana with an empty
+// or default admin password. The name is constrained to env-name
+// characters by intent validation.
+func grafanaAdminPasswordRef(g intent.GrafConfig) string {
+	if g.AdminPasswordEnv == "" {
+		return ""
+	}
+	return fmt.Sprintf("${%s:?set %s to the Grafana admin password (monitoring.grafana.admin_password_env)}",
+		g.AdminPasswordEnv, g.AdminPasswordEnv)
 }
 
 // RenderPrometheusConfig generates prometheus.yml content.

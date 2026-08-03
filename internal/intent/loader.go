@@ -439,6 +439,22 @@ func validateMonitoring(m *Monitoring) error {
 			return fmt.Errorf("monitoring.prometheus.retention must match ^\\d+[dwh]$ (e.g. \"7d\", \"2w\"), got %q", m.Prometheus.Retention)
 		}
 	}
+	if m.Grafana.AdminPasswordEnv != "" {
+		// Same contract as witness_key.private_key_env: the intent holds
+		// the NAME of an env var, never the secret. The name is also
+		// interpolated into the rendered compose file, so restricting it
+		// to env-name characters keeps it from breaking out of ${...}.
+		envVarPattern := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+		if !envVarPattern.MatchString(m.Grafana.AdminPasswordEnv) {
+			return fmt.Errorf("monitoring.grafana.admin_password_env %q is not a valid environment variable name; it must be the NAME of an env var holding the Grafana admin password (e.g., GRAFANA_ADMIN_PASSWORD), not the password itself", m.Grafana.AdminPasswordEnv)
+		}
+	}
+	if m.Grafana.Expose && m.Grafana.AdminPasswordEnv == "" {
+		// Publishing Grafana beyond loopback with the image's default
+		// admin/admin login hands the dashboards and the datasource proxy
+		// to anyone who can reach the port.
+		return fmt.Errorf("monitoring.grafana.expose publishes Grafana on all host interfaces and therefore requires monitoring.grafana.admin_password_env: set it to the NAME of an environment variable holding the admin password (e.g., admin_password_env: GRAFANA_ADMIN_PASSWORD), or drop expose to keep Grafana bound to 127.0.0.1")
+	}
 	return nil
 }
 

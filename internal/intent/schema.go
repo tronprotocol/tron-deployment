@@ -437,6 +437,27 @@ type PromConfig struct {
 // GrafConfig configures the Grafana visualizer.
 type GrafConfig struct {
 	Port int `yaml:"port,omitempty" json:"port,omitempty"`
+
+	// Expose publishes Grafana's host port on every interface (0.0.0.0)
+	// instead of loopback only. Off by default: the grafana-oss image
+	// ships a well-known default admin login, so a host-wide bind hands
+	// the dashboards — and Grafana's datasource proxy, which can be
+	// pointed at anything the host can reach — to whoever can reach the
+	// port. Requires AdminPasswordEnv (see validateMonitoring).
+	Expose bool `yaml:"expose,omitempty" json:"expose,omitempty"`
+
+	// AdminPasswordEnv is the NAME of an environment variable holding the
+	// Grafana admin password — never the password itself. The rendered
+	// compose references it as ${NAME:?...}, so the variable must be set
+	// in the environment that runs `docker compose up` (trond's own
+	// environment for local targets); compose refuses to start the stack
+	// when it is unset or empty.
+	//
+	// Grafana applies GF_SECURITY_ADMIN_PASSWORD when it initialises its
+	// database, i.e. on the first start of a fresh grafana_data volume.
+	// Setting it for an already-initialised stack does not rotate an
+	// existing admin password.
+	AdminPasswordEnv string `yaml:"admin_password_env,omitempty" json:"admin_password_env,omitempty"`
 }
 
 // BoolPtr is a helper for creating *bool values in intent construction.

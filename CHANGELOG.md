@@ -254,6 +254,13 @@ The agent-ergonomics arc lands across four sequenced PRs:
   absent) is the only way to skip the check; results carry
   `verification_skipped` so `md5_verified: false` can no longer be read
   as "the mirror had no sidecar". Schema 1.12.2 → 1.12.3
+- **Breaking:** the rendered monitoring stack binds Grafana's host port
+  to `127.0.0.1` instead of `0.0.0.0`; it previously published the
+  grafana-oss default `admin/admin` login to every network that could
+  reach the deployment host. Use an SSH tunnel, or opt back in with
+  `monitoring.grafana.expose: true`, which now requires
+  `monitoring.grafana.admin_password_env` (the NAME of an env var
+  feeding `GF_SECURITY_ADMIN_PASSWORD`)
 
 ## [0.1.0-alpha] — 2026-XX-XX
 

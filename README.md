@@ -370,7 +370,20 @@ trond network status
 | `trond status` / `trond inspect <node> -o json` | Expose the stack's `prometheus_port` / `grafana_port` so agents can discover it |
 | `trond remove <node>` / `trond network destroy` | Automatically cleans up the monitoring stack |
 
-After deployment, Grafana is available at http://localhost:3000 (admin/admin) with 5 dashboards: java-tron-server, java-tron-api, java-tron-api-statistic, java-tron-mechanism, and node-exporter-full. Prometheus is at http://localhost:9090.
+After deployment, Grafana is available at http://localhost:3000 — **on the deployment host's loopback interface only** — with 5 dashboards: java-tron-server, java-tron-api, java-tron-api-statistic, java-tron-mechanism, and node-exporter-full. Prometheus is at http://localhost:9090.
+
+Grafana keeps the image's default `admin/admin` login until you give it a password, so it is bound to `127.0.0.1`: reach it from your workstation over an SSH tunnel (`ssh -L 3000:127.0.0.1:3000 user@host`) or a reverse proxy you control. To publish it on all interfaces instead, opt in explicitly — which requires an admin password:
+
+```yaml
+monitoring:
+  enabled: true
+  grafana:
+    port: 3000
+    expose: true                              # bind 0.0.0.0 instead of 127.0.0.1
+    admin_password_env: GRAFANA_ADMIN_PASSWORD  # NAME of an env var, not the password
+```
+
+`GRAFANA_ADMIN_PASSWORD` must be set in the environment that runs `trond apply` (compose refuses to start the stack otherwise). Grafana applies it when it first initialises its database, so rotate the password in Grafana itself for a stack that is already running.
 
 **Limitations**: The single Prometheus instance loses visibility into nodes isolated by `trond partition`; metrics resume after `trond heal`. Monitoring is Docker-only (Prometheus and Grafana run as containers), so jar-runtime targets need Docker on the trond machine for the monitoring stack.
 

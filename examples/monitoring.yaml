@@ -3,7 +3,11 @@
 #       trond apply --intent examples/monitoring.yaml --no-monitor  (skip monitoring)
 #
 # Default behaviour:
-#   - Grafana is exposed on port 3000.
+#   - Grafana is published on port 3000 of the deployment host's loopback
+#     interface (127.0.0.1) only, because the image ships with the
+#     well-known admin/admin login.  Reach it over an SSH tunnel, or set
+#     grafana.expose (which requires grafana.admin_password_env) to
+#     publish it on all interfaces.
 #   - Prometheus is NOT exposed on the host by default; it is reachable
 #     inside the Docker network by Grafana.  To expose Prometheus add
 #     monitoring.prometheus.port explicitly.
@@ -25,6 +29,10 @@ monitoring:
     retention: 7d
   grafana:
     port: 3000
+    # Uncomment BOTH lines to publish Grafana on every interface with an
+    # admin password taken from the named environment variable:
+    # expose: true
+    # admin_password_env: GRAFANA_ADMIN_PASSWORD
 
 nodes:
   - type: fullnode
