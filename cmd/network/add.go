@@ -63,7 +63,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	node := &parsed.Nodes[0]
 
-	// --require-private: refuse to add a node on a non-private network.
+	// --require-private, half one: refuse to add a node whose own intent
+	// declares a non-private network. This fires first (it needs no state)
+	// and is what keeps a mainnet/nile node out of a private enclave.
 	if err := guard.Enforce(parsed.Network); err != nil {
 		return err
 	}
@@ -77,6 +79,21 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	deployState, err := store.Load()
 	if err != nil {
+		return err
+	}
+
+	// --require-private, half two: the resource this command mutates is the
+	// ENCLAVE named by --network, not the intent file. The check above reads
+	// parsed.Network — a label the caller writes — so on its own an intent
+	// saying `network: private` walked straight into a mainnet enclave: the
+	// new container joins that enclave's shared docker network, is wired as
+	// an active P2P peer of its production nodes, and its Prometheus config
+	// is rewritten. Decide the gate from what state records about the nodes
+	// already in the enclave, exactly as `network destroy` / `network
+	// upgrade` do. State-only and before any target resolution, so an
+	// unreachable enclave still refuses with PRIVATE_NETWORK_REQUIRED rather
+	// than TARGET_UNREACHABLE.
+	if err := enforceEnclavePrivate(deployState, addNetworkName); err != nil {
 		return err
 	}
 
@@ -233,6 +250,50 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	output.WriteJSON(os.Stdout, result)
 	return nil
+}
+
+// enforceEnclavePrivate applies the --require-private gate to the existing
+// members of the enclave a `network add` is joining, using the networks
+// RECORDED IN STATE — the same rule `network destroy` and `network upgrade`
+// apply via guard.EnforceNodes, and the same refusal envelope
+// (PRIVATE_NETWORK_REQUIRED, exit 2, naming the first offender).
+//
+// Membership is the "<network>-node" prefix match runAdd itself uses to pick
+// the next index, to populate the new node's active_peers and to rebuild the
+// enclave's Prometheus targets — so the guarded set is exactly the set this
+// add touches, no more and no less. (destroy additionally matches a node
+// named exactly like the network; add never touches such a node — it is not
+// peered with, not scraped, and does not affect the next index — so it is
+// deliberately out of scope here. An enclave consisting only of that node
+// records no members and is refused by the empty case below.)
+//
+// Empty enclave = fail closed, but only under the gate: with no recorded
+// members there is nothing that can prove the enclave is private, and the
+// sibling verbs likewise refuse a network name that owns zero nodes
+// (NETWORK_NOT_FOUND). Gate off, behaviour is untouched: no state scan, no
+// new refusal.
+func enforceEnclavePrivate(deployState *state.DeploymentState, networkName string) error {
+	if !guard.Requested() {
+		return nil
+	}
+	prefix := networkName + "-node"
+	var refs []guard.NodeRef
+	for _, n := range deployState.Nodes {
+		if strings.HasPrefix(n.Name, prefix) {
+			refs = append(refs, guard.NodeRef{Name: n.Name, Network: n.Network})
+		}
+	}
+	if len(refs) == 0 {
+		return output.NewErrorf("PRIVATE_NETWORK_REQUIRED", output.ExitValidationError,
+			"--require-private is set but network %q has no nodes recorded in state, "+
+				"so it cannot be proven private; refusing to add to it", networkName).
+			WithSuggestions(
+				"Run: trond network status  (to check the network name)",
+				"Create the network first: trond network create --intent <file>",
+				"Or drop --require-private / "+guard.EnvVar,
+			)
+	}
+	return guard.EnforceNodes(refs)
 }
 
 // metricsPort returns the Prometheus scrape port stored in state, falling

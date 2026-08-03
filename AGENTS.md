@@ -679,6 +679,15 @@ An automated caller that should only ever touch a throwaway private chain
   brand-new node is unaffected, and re-applying an intent whose network
   matches the deployed one behaves exactly as before. To genuinely convert
   a node between networks, `trond remove` it first, then apply.
+- `network add` is gated on BOTH networks: the intent's own `network:`
+  label AND the recorded networks of the nodes already in the enclave
+  named by `--network`. A `network: private` intent therefore cannot add
+  a node into a mainnet/nile enclave (where it would be peered with the
+  production nodes and scraped by their Prometheus) — that refuses with
+  `PRIVATE_NETWORK_REQUIRED`, naming the offending member. Under the gate
+  an enclave with no nodes recorded in state cannot be proven private, so
+  adding to it is refused too; with the gate off, `add` behaves exactly as
+  before.
 
 The read-only verbs (`status`, `wait`, `inspect`, `list`, `diagnose`)
 never mutate and are always safe. The multi-node mutators are now gated
