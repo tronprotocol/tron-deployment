@@ -12,6 +12,7 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
+	"github.com/tronprotocol/tron-deployment/internal/state"
 )
 
 // TestRunApply_RequirePrivate_RefusesNonPrivate is the C1 cmd guard test:
@@ -61,5 +62,60 @@ func TestRunApply_RequirePrivate_RefusesNonPrivate(t *testing.T) {
 	}
 	if se.ExitCode != output.ExitValidationError {
 		t.Errorf("exit_code = %d; want %d", se.ExitCode, output.ExitValidationError)
+	}
+}
+
+// TestRunApply_RequirePrivate_RefusesPrivateLabelOverMainnetNode is the
+// state-side half of the gate: an intent may CLAIM `network: private`, but
+// when a node is already deployed under that name the gate is decided by the
+// network recorded in state. Without it, `name: <mainnet node>` /
+// `network: private` re-rendered and re-deployed a production node under
+// TROND_REQUIRE_PRIVATE=1 (and then relabelled it private in state, disarming
+// every later gate check). Hermetic: the refusal happens before target
+// resolution, so no docker/SSH is involved.
+func TestRunApply_RequirePrivate_RefusesPrivateLabelOverMainnetNode(t *testing.T) {
+	// Seeds a mainnet node "tron-prod" into an isolated state dir and turns
+	// the gate on (both restored on cleanup).
+	seedMainnetNode(t, "tron-prod")
+
+	oldPath := applyIntentPath
+	t.Cleanup(func() { applyIntentPath = oldPath })
+
+	intentPath := filepath.Join(t.TempDir(), "intent.yaml")
+	body := "name: tron-prod\nnetwork: private\n" +
+		"target:\n  type: local\n  runtime: docker\n" +
+		"nodes:\n  - type: fullnode\n    version: latest\n"
+	if err := os.WriteFile(intentPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	applyIntentPath = intentPath
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	err := runApply(cmd, nil)
+	if err == nil {
+		t.Fatal("expected refusal: private-labelled intent over a mainnet node with the gate on")
+	}
+	var se *output.StructuredError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected *output.StructuredError, got %T: %v", err, err)
+	}
+	if se.Code != "PRIVATE_NETWORK_REQUIRED" || se.ExitCode != output.ExitValidationError {
+		t.Errorf("got code=%q exit=%d; want PRIVATE_NETWORK_REQUIRED/%d",
+			se.Code, se.ExitCode, output.ExitValidationError)
+	}
+
+	// The refusal must not have rewritten the node's recorded network.
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	st, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := store.GetNode(st, "tron-prod").Network; got != "mainnet" {
+		t.Errorf("recorded network = %q; want mainnet", got)
 	}
 }

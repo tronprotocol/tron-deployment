@@ -667,6 +667,15 @@ An automated caller that should only ever touch a throwaway private chain
   refuses with `PRIVATE_NETWORK_REQUIRED` rather than `TARGET_UNREACHABLE`.
   A node with no recorded network (deployed before network tracking) is
   fail-safe-refused with a re-apply hint.
+- `apply` is gated on BOTH networks: the intent's `network:` label AND the
+  recorded network of the node already deployed under that `name:`. An
+  intent cannot re-label a mainnet/nile node as `private` to get at it —
+  that refuses with `PRIVATE_NETWORK_REQUIRED` under the gate, and with
+  `NETWORK_MISMATCH` (exit 2) even when the gate is off, so a node's
+  recorded network is never silently downgraded to `private`. Deploying a
+  brand-new node is unaffected, and re-applying an intent whose network
+  matches the deployed one behaves exactly as before. To genuinely convert
+  a node between networks, `trond remove` it first, then apply.
 
 The read-only verbs (`status`, `wait`, `inspect`, `list`, `diagnose`)
 never mutate and are always safe. The multi-node mutators are now gated

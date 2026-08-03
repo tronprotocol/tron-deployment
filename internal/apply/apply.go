@@ -39,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
@@ -93,10 +94,13 @@ type Options struct {
 	WaitTimeout time.Duration
 
 	// RequirePrivate is the machine-enforced safety gate: when true,
-	// Apply refuses any non-private intent before doing anything. Lives
-	// in the core (not just cmd) so EVERY caller — CLI apply, network
-	// create, MCP — inherits the guarantee and it can't be bypassed by
-	// choosing a different entry point. Pure opt-in; callers set it.
+	// Apply refuses before doing anything unless BOTH the intent's network
+	// and (for an already-deployed node of the same name) the network
+	// RECORDED IN STATE are private — the intent's label alone is caller
+	// input and cannot authorise touching a node deployed on mainnet/nile.
+	// Lives in the core (not just cmd) so EVERY caller — CLI apply, MCP —
+	// inherits the guarantee and it can't be bypassed by choosing a
+	// different entry point. Pure opt-in; callers set it.
 	RequirePrivate bool
 }
 
@@ -196,6 +200,43 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 	if opts.RequirePrivate && !intent.IsPrivate(opts.Intent.Network) {
 		return nil, output.NewError("PRIVATE_NETWORK_REQUIRED", output.ExitValidationError,
 			fmt.Sprintf("--require-private set but intent network is %q (not private); refusing to apply", opts.Intent.Network))
+	}
+
+	// Same gate, other side of the mutation. The check above reads
+	// opts.Intent.Network — a LABEL the caller writes in the intent file —
+	// while the resource this apply actually replaces is whatever node is
+	// already recorded under opts.Intent.Name, whose real network lives in
+	// state. Checking the label alone let an intent headed
+	// `name: <mainnet node>` / `network: private` re-render and re-deploy a
+	// production node under the gate. Every other mutator resolves the
+	// network from state first (cmd/resolve.go requirePrivateForNode →
+	// guard.Enforce); this is the same rule, reusing guard so the
+	// PRIVATE_NETWORK_REQUIRED / exit-2 envelope is byte-identical.
+	recorded := recordedNode(opts)
+	if recorded != nil {
+		if err := guard.EnforceArg(opts.RequirePrivate, recorded.Network); err != nil {
+			return nil, err
+		}
+	}
+
+	// Defence in depth, deliberately INDEPENDENT of the gate: never relabel a
+	// node that state records on a non-private network as "private". The
+	// upsert further down (and the no_change backfill in noChangeResult)
+	// writes ManagedNode.Network straight from the intent, so a
+	// private-labelled re-apply of a mainnet node would flip the recorded
+	// value and permanently disarm every state-based gate check for that node
+	// — including for callers that never set RequirePrivate. Backfilling an
+	// UNRECORDED (empty) network from the intent is still allowed: that
+	// records a missing fact rather than overwriting a known one.
+	if recorded != nil && recorded.Network != "" &&
+		!intent.IsPrivate(recorded.Network) && intent.IsPrivate(opts.Intent.Network) {
+		return nil, output.NewErrorf("NETWORK_MISMATCH", output.ExitValidationError,
+			"node %q is deployed on network %q; refusing to apply an intent that labels it %q",
+			opts.Intent.Name, recorded.Network, opts.Intent.Network).
+			WithSuggestions(
+				fmt.Sprintf("Set the intent's `network:` to %q, or deploy the private node under a different `name:`", recorded.Network),
+				fmt.Sprintf("To genuinely convert this node, remove it first: trond remove %s", opts.Intent.Name),
+			)
 	}
 
 	start := time.Now()
@@ -374,6 +415,22 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// recordedNode returns the managed node this apply would replace, i.e. the
+// state entry keyed by the intent's name. It prefers opts.Existing (the
+// caller's own lookup) and otherwise resolves the name against the state it
+// was handed, so a caller that forgets to populate Existing cannot dodge the
+// network checks in Apply. Used ONLY by those checks — the deploy path keeps
+// reading opts.Existing so idempotency/outcome behaviour is untouched.
+func recordedNode(opts Options) *state.ManagedNode {
+	if opts.Existing != nil {
+		return opts.Existing
+	}
+	if opts.Store == nil || opts.State == nil || opts.Intent == nil {
+		return nil
+	}
+	return opts.Store.GetNode(opts.State, opts.Intent.Name)
 }
 
 func validateOptions(o Options) error {

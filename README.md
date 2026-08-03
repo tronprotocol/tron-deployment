@@ -324,6 +324,8 @@ cache management, and MCP usage: [build pipeline quickstart](specs/002-trond-bui
 
 Pass `--require-private` (a persistent flag on any command) or export `TROND_REQUIRE_PRIVATE=1` once, and trond **refuses to mutate a non-private node** — `PRIVATE_NETWORK_REQUIRED`, exit 2. It covers every mutating verb: `apply`, `network create/add/destroy/upgrade`, `start` / `stop` / `restart` / `remove` / `rollback` / `upgrade`, and the chaos primitives (`disconnect` / `partition` / …), plus the MCP `apply` tool's `require_private` arg. The gate is a one-way floor: once the env is set, `--require-private=false` cannot turn it off. Read-only verbs (`status`, `inspect`, `wait`, `diagnose`) are always allowed. Default behaviour is unchanged when neither is set.
 
+For `apply` the gate reads both the intent's `network:` label and the recorded network of the node already deployed under that `name:` — an intent cannot re-label a mainnet/nile node `private` to get at it. That relabel is refused with `NETWORK_MISMATCH` (exit 2) even with the gate off, so a node's recorded network is never silently downgraded; `trond remove` the node first if you really mean to redeploy that name on another network.
+
 ### Snapshots
 
 Skip the days-long sync from genesis by pulling an official chain database snapshot. trond streams the tarball through gunzip + tar in one pipeline (no on-disk `.tgz`), MD5-verifies inline, and pre-checks free disk space.

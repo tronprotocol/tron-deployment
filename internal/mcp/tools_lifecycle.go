@@ -111,6 +111,13 @@ func applyTool(ctx context.Context, _ *mcp.CallToolRequest, args applyArgs) (*mc
 	if err := guard.EnforceArg(args.RequirePrivate, parsed.Network); err != nil {
 		return errResult(err)
 	}
+	// ...and against the network RECORDED IN STATE for the node this apply
+	// would replace: the intent's `network:` is a caller-supplied label, so on
+	// its own it let `name: <mainnet node>` + `network: private` re-deploy a
+	// production node under the gate. Mirrors the CLI's requirePrivateForNode.
+	if err := enforcePrivateForRecordedNode(args.RequirePrivate, parsed.Name); err != nil {
+		return errResult(err)
+	}
 
 	tgt, err := resolveTarget(parsed)
 	if err != nil {
@@ -171,6 +178,33 @@ func applyTool(ctx context.Context, _ *mcp.CallToolRequest, args applyArgs) (*mc
 		return errResult(output.NewError("DEPLOY_ERROR", output.ExitGeneralError, err.Error()))
 	}
 	return jsonResult(res)
+}
+
+// enforcePrivateForRecordedNode is the MCP twin of cmd/resolve.go's
+// requirePrivateForNode: it enforces the --require-private gate against the
+// RECORDED network of an already-deployed node, using state ONLY — no target
+// resolution, so an unreachable mainnet node still refuses with
+// PRIVATE_NETWORK_REQUIRED. requested is the tool's own require_private
+// argument, OR-ed with the flag/env floor inside guard. A node that is not in
+// state returns nil: a fresh deploy is governed by the intent-side check.
+// Fast path: no state read at all when the gate is off.
+func enforcePrivateForRecordedNode(requested bool, name string) error {
+	if !requested && !guard.Requested() {
+		return nil
+	}
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		return err
+	}
+	st, err := store.Load()
+	if err != nil {
+		return err
+	}
+	node := store.GetNode(st, name)
+	if node == nil {
+		return nil
+	}
+	return guard.EnforceArg(requested, node.Network)
 }
 
 // resolveTarget mirrors cmd/apply.go's helper. Duplicated here so the

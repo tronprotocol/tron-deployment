@@ -75,6 +75,18 @@ func runApply(cmd *cobra.Command, args []string) error {
 	if err := guard.Enforce(parsed.Network); err != nil {
 		return err
 	}
+	// ...and against the network RECORDED IN STATE for the node this apply
+	// would replace. The intent's `network:` is a caller-supplied label; when
+	// a node already exists under this name, the gate must be decided by what
+	// is actually deployed — otherwise `name: <mainnet node>` +
+	// `network: private` walks straight through. State-only, so an
+	// unreachable mainnet node still refuses with PRIVATE_NETWORK_REQUIRED
+	// instead of TARGET_UNREACHABLE. A missing node returns nil (a fresh
+	// deploy is governed by the intent check above). apply.Apply repeats this
+	// under the state lock — this is the precedence layer.
+	if err := requirePrivateForNode(parsed.Name); err != nil {
+		return err
+	}
 
 	// Monitoring is opt-in: only deploy when --monitor is explicitly passed.
 	if cmd.Flags().Changed("monitor") {
