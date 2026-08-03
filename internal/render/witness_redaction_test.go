@@ -13,7 +13,10 @@ import (
 // search over any output surface is conclusive.
 const probeWitnessKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func witnessIntent(t *testing.T, envName string) (*intent.Intent, *intent.NodeSpec) {
+// The env var name every case in this file renders through.
+const probeWitnessKeyEnv = "PROBE_SR_KEY"
+
+func witnessIntent(t *testing.T) (*intent.Intent, *intent.NodeSpec) {
 	t.Helper()
 	seeds := []string{"1.2.3.4:18888"}
 	discovery := false
@@ -22,7 +25,7 @@ func witnessIntent(t *testing.T, envName string) (*intent.Intent, *intent.NodeSp
 		Network: "mainnet",
 		Nodes: []intent.NodeSpec{{
 			Type:       "witness",
-			WitnessKey: &intent.WitnessKey{PrivateKeyEnv: envName},
+			WitnessKey: &intent.WitnessKey{PrivateKeyEnv: probeWitnessKeyEnv},
 			NetworkOverrides: intent.NetworkOverrides{
 				Seeds:     &seeds,
 				Discovery: &discovery,
@@ -38,7 +41,7 @@ func witnessIntent(t *testing.T, envName string) (*intent.Intent, *intent.NodeSp
 // print / JSON / MCP / diff surface handles does not.
 func TestRendered_DeployCarriesKey_DisplayDoesNot(t *testing.T) {
 	t.Setenv("PROBE_SR_KEY", probeWitnessKey)
-	i, node := witnessIntent(t, "PROBE_SR_KEY")
+	i, node := witnessIntent(t)
 
 	r, err := RenderHOCONWithSecrets("", i, node)
 	if err != nil {
@@ -71,7 +74,7 @@ func TestRendered_DeployCarriesKey_DisplayDoesNot(t *testing.T) {
 // redacted one.
 func TestRenderHOCON_ReturnsDisplayForm(t *testing.T) {
 	t.Setenv("PROBE_SR_KEY", probeWitnessKey)
-	i, node := witnessIntent(t, "PROBE_SR_KEY")
+	i, node := witnessIntent(t)
 
 	out, err := RenderHOCON("", i, node)
 	if err != nil {
@@ -90,7 +93,7 @@ func TestRenderHOCON_ReturnsDisplayForm(t *testing.T) {
 // the render changed.
 func TestRendered_DeployAndDisplayDifferOnlyInWitnessLine(t *testing.T) {
 	t.Setenv("PROBE_SR_KEY", probeWitnessKey)
-	i, node := witnessIntent(t, "PROBE_SR_KEY")
+	i, node := witnessIntent(t)
 
 	r, err := RenderHOCONWithSecrets("", i, node)
 	if err != nil {
@@ -163,7 +166,7 @@ func TestRendered_NoSecret_FormsAreIdentical(t *testing.T) {
 // "this is a preview" flag.
 func TestRendered_UnsetEnvIsNotRedacted(t *testing.T) {
 	t.Setenv("PROBE_SR_KEY", "")
-	i, node := witnessIntent(t, "PROBE_SR_KEY")
+	i, node := witnessIntent(t)
 
 	r, err := RenderHOCONWithSecrets("", i, node)
 	if err != nil {
@@ -185,7 +188,7 @@ func TestRendered_UnsetEnvIsNotRedacted(t *testing.T) {
 // Rendered has to implement Stringer / GoStringer.
 func TestRendered_FormattingCannotSpillTheKey(t *testing.T) {
 	t.Setenv("PROBE_SR_KEY", probeWitnessKey)
-	i, node := witnessIntent(t, "PROBE_SR_KEY")
+	i, node := witnessIntent(t)
 
 	r, err := RenderHOCONWithSecrets("", i, node)
 	if err != nil {
