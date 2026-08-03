@@ -223,6 +223,29 @@ The agent-ergonomics arc lands across four sequenced PRs:
 - `network add` now honors target.type instead of hard-coding
   LocalTarget (an SSH intent would otherwise deploy on the operator's
   local host)
+- **Snapshot downloads: the cleartext transport is now visible, and a
+  strong digest can be pinned.** The six mainnet mirrors are bare IPs
+  that publish no HTTPS endpoint (probed 2026-07-31: `:443` closed,
+  `:80` answers), so their tarballs — and the `.md5sum` sidecar, which
+  rides the same connection — are unauthenticated in transit; a matching
+  MD5 has therefore never attested provenance, only that the transfer
+  was not corrupted. trond no longer lets that pass silently:
+  `snapshot download` warns on stderr before any bytes move (under
+  `--detach` the warning lands in the job log), reports
+  `plaintext_transport` in `-o json` on both the `--dry-run` preflight
+  and the completion payload and via the MCP `snapshot_download` tool,
+  and shows a `transport:` row in the dry-run table. A new `--sha256
+  <hex>` flag (and matching MCP `sha256` arg) checks an out-of-band
+  digest — the only verification in this flow that can detect a
+  substituted archive; a mismatch fails the download and a malformed pin
+  is rejected before the transfer starts. The SHA-256 of every download
+  is computed and reported regardless, so an operator can pin it on
+  later fetches of the same backup. The mainnet `BaseURL`s are
+  deliberately *not* rewritten to `https://` — those mirrors have no TLS
+  to upgrade to, and pretending otherwise would break every mainnet
+  download. Existing MD5 behaviour, verification ordering, and disk
+  headroom are unchanged. Schema `1.12.2` → `1.12.3` (additive optional
+  fields on one schema).
 
 ## [0.1.0-alpha] — 2026-XX-XX
 

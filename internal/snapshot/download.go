@@ -5,11 +5,13 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/md5" //nolint:gosec // upstream publishes md5 .md5sum sidecars; this is integrity, not security
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,10 +74,26 @@ type DownloadOptions struct {
 	Force    bool   // overwrite a non-empty existing database
 	NoVerify bool   // skip MD5 verification (for hosts that omit the sidecar)
 
+	// ExpectedSHA256 is an operator-supplied, out-of-band SHA-256 of the
+	// tarball (64 lowercase hex chars; case-insensitive on input). It is
+	// the only digest in this flow that carries real authenticity: the
+	// upstream .md5sum sidecar arrives over the same channel as the
+	// tarball, so an on-path attacker who can rewrite one can rewrite the
+	// other. When set, a mismatch fails the download; when empty, nothing
+	// about the existing MD5 behaviour changes.
+	ExpectedSHA256 string
+
 	// ProgressFn is called periodically with bytes-downloaded out of total.
 	// Caller is responsible for rendering. Both args are bytes; total is 0
 	// when the server didn't supply a Content-Length.
 	ProgressFn func(downloaded, total int64)
+
+	// WarnFn receives operator-facing warnings that are not errors — today
+	// only the plaintext-transport notice, emitted once before any tarball
+	// bytes move. The cmd layer wires this to stderr so it lands in the
+	// terminal (and, under --detach, in the job log). Nil means "drop the
+	// warning"; the same facts stay available on the returned structs.
+	WarnFn func(msg string)
 
 	// HTTPClient lets tests stub the network. Defaults to http.DefaultClient.
 	HTTPClient *http.Client
@@ -93,6 +111,12 @@ type PreflightResult struct {
 	DatabasePresent bool   `json:"database_present"`
 	WouldOverwrite  bool   `json:"would_overwrite"`
 	HasMD5Sidecar   bool   `json:"has_md5_sidecar"`
+
+	// PlaintextTransport is true when the tarball (and therefore its
+	// .md5sum sidecar) travels over cleartext http://. Surfaced so an
+	// operator — or an agent parsing -o json — can see that this transfer
+	// has no transport authenticity before committing hours to it.
+	PlaintextTransport bool `json:"plaintext_transport"`
 }
 
 // DownloadResult is what Download returns on success.
@@ -105,6 +129,65 @@ type DownloadResult struct {
 	ActualMD5       string        `json:"actual_md5"`
 	ExtractedTo     string        `json:"extracted_to"`
 	FilesExtracted  int           `json:"files_extracted"`
+
+	// SHA256 is always computed over the wire bytes, whether or not the
+	// caller pinned one. Recording it lets an operator who trusts this
+	// first fetch pin --sha256 on every later fetch of the same backup.
+	SHA256 string `json:"sha256"`
+	// ExpectedSHA256 echoes the operator-supplied pin, when there was one.
+	ExpectedSHA256 string `json:"expected_sha256,omitempty"`
+	// SHA256Verified is true only when a pin was supplied AND matched.
+	SHA256Verified bool `json:"sha256_verified"`
+	// PlaintextTransport mirrors PreflightResult.PlaintextTransport.
+	PlaintextTransport bool `json:"plaintext_transport"`
+}
+
+// PlaintextTransport reports whether rawURL is delivered over a cleartext,
+// unauthenticated channel. Anything that is not https:// counts — including
+// a URL we cannot parse or one with no scheme at all — so the answer fails
+// safe towards "warn the operator".
+func PlaintextTransport(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return true
+	}
+	return !strings.EqualFold(u.Scheme, "https")
+}
+
+// PlaintextWarning renders the operator-facing notice for a cleartext
+// transfer. Kept here (rather than in the cmd layer) so the CLI, the MCP
+// tool and any future caller all say the same thing.
+func PlaintextWarning(rawURL string, pinned bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "WARNING: %s is served over cleartext HTTP.\n", rawURL)
+	b.WriteString("  The tarball and its .md5sum sidecar arrive over the same unauthenticated\n")
+	b.WriteString("  channel, so an on-path attacker can substitute both: a matching MD5 proves\n")
+	b.WriteString("  only that the bytes you received are the bytes that were sent to you, not\n")
+	b.WriteString("  that they came from TRON. MD5 is also collision-prone in its own right.\n")
+	if pinned {
+		b.WriteString("  A --sha256 pin was supplied and will be enforced against the transfer.\n")
+	} else {
+		b.WriteString("  This mirror publishes no HTTPS endpoint. Verify the extracted chain data\n")
+		b.WriteString("  against a trusted peer before relying on it, or pin a digest you obtained\n")
+		b.WriteString("  out of band with --sha256 <hex>.\n")
+	}
+	return b.String()
+}
+
+// normalizeSHA256 validates an operator-supplied SHA-256 pin and returns it
+// lowercased. An empty input is not an error — it just means "no pin".
+func normalizeSHA256(in string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(in))
+	if s == "" {
+		return "", nil
+	}
+	if len(s) != 64 {
+		return "", fmt.Errorf("invalid --sha256 %q: expected 64 hex characters, got %d", in, len(s))
+	}
+	if _, err := hex.DecodeString(s); err != nil {
+		return "", fmt.Errorf("invalid --sha256 %q: not hexadecimal", in)
+	}
+	return s, nil
 }
 
 // Preflight inspects the destination filesystem and remote tarball
@@ -121,7 +204,7 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 		return nil, fmt.Errorf("invalid kind %q (need lite or full)", opts.Kind)
 	}
 
-	r := &PreflightResult{URL: url}
+	r := &PreflightResult{URL: url, PlaintextTransport: PlaintextTransport(url)}
 
 	// HEAD for size. We tolerate a missing Content-Length (some mirrors
 	// don't send it) but report 0 so callers can warn.
@@ -185,7 +268,13 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 //
 // Pipeline:
 //
-//	HTTP body → TeeReader(md5) → progress wrapper → gzip → tar → fs
+//	HTTP body → TeeReader(md5 + sha256) → progress wrapper → gzip → tar → fs
+//
+// A note on what the digests buy. The upstream .md5sum sidecar comes down
+// the same connection as the tarball, so on a cleartext mirror it proves
+// transfer integrity only — never provenance. An operator-supplied
+// ExpectedSHA256, obtained out of band, is the digest that can actually
+// detect substitution; the plaintext warning tells the operator so.
 //
 // On any error during streaming we abort cleanly: partially extracted
 // files stay where they are, the next run with --force will overwrite
@@ -198,6 +287,12 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 	}
 	if opts.Backup == "" {
 		return nil, errors.New("backup is required")
+	}
+	// Validate the pin before the transfer, not after: a typo'd digest
+	// should not cost the operator a multi-hour download.
+	expectedSHA256, err := normalizeSHA256(opts.ExpectedSHA256)
+	if err != nil {
+		return nil, err
 	}
 
 	pre, err := Preflight(ctx, opts)
@@ -227,6 +322,14 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 			// for hours. Caller controls timeout via ctx.
 			Timeout: 0,
 		}
+	}
+
+	// Warn before a single byte moves — including before the sidecar
+	// fetch, which rides the same channel. This is emitted once per
+	// download; the same fact is on both returned structs for callers
+	// that render JSON instead of text.
+	if pre.PlaintextTransport && opts.WarnFn != nil {
+		opts.WarnFn(PlaintextWarning(pre.URL, expectedSHA256 != ""))
 	}
 
 	// Pull the .md5sum first (tiny). If the user passed --no-verify we
@@ -260,12 +363,17 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 	}
 
 	hasher := md5.New() //nolint:gosec // matches upstream .md5sum sidecar format; integrity, not crypto
+	// SHA-256 runs unconditionally alongside MD5. The cost is negligible
+	// against a network-bound transfer, and it is what makes an operator
+	// --sha256 pin — the only digest in this flow with any authenticity —
+	// possible at all.
+	sha := sha256.New()
 	progress := &progressReader{
 		r:     resp.Body,
 		total: resp.ContentLength,
 		cb:    opts.ProgressFn,
 	}
-	teed := io.TeeReader(progress, hasher)
+	teed := io.TeeReader(progress, io.MultiWriter(hasher, sha))
 
 	gz, err := gzip.NewReader(teed)
 	if err != nil {
@@ -287,6 +395,19 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 	}
 
 	actualMD5 := hex.EncodeToString(hasher.Sum(nil))
+	actualSHA256 := hex.EncodeToString(sha.Sum(nil))
+
+	// The operator-supplied pin is checked first: it is the only digest
+	// here that did not arrive over the same channel as the payload, so
+	// when both are present its verdict is the one that matters.
+	sha256Verified := false
+	if expectedSHA256 != "" {
+		if !strings.EqualFold(actualSHA256, expectedSHA256) {
+			return nil, fmt.Errorf("sha256 mismatch: expected %s, got %s", expectedSHA256, actualSHA256)
+		}
+		sha256Verified = true
+	}
+
 	verified := false
 	if expectedMD5 != "" {
 		if !strings.EqualFold(actualMD5, expectedMD5) {
@@ -297,14 +418,18 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 
 	dur := time.Since(start)
 	return &DownloadResult{
-		BytesDownloaded: progress.read,
-		Duration:        dur,
-		DurationMs:      dur.Milliseconds(),
-		MD5Verified:     verified,
-		ExpectedMD5:     expectedMD5,
-		ActualMD5:       actualMD5,
-		ExtractedTo:     opts.DestDir,
-		FilesExtracted:  extracted,
+		BytesDownloaded:    progress.read,
+		Duration:           dur,
+		DurationMs:         dur.Milliseconds(),
+		MD5Verified:        verified,
+		ExpectedMD5:        expectedMD5,
+		ActualMD5:          actualMD5,
+		ExtractedTo:        opts.DestDir,
+		FilesExtracted:     extracted,
+		SHA256:             actualSHA256,
+		ExpectedSHA256:     expectedSHA256,
+		SHA256Verified:     sha256Verified,
+		PlaintextTransport: pre.PlaintextTransport,
 	}, nil
 }
 

@@ -252,9 +252,11 @@ trond snapshot sources -o json
 # 2. Dry-run to confirm disk space + URL + would-overwrite check.
 trond snapshot download --network mainnet --to /srv/tron/<node> --dry-run -o json
 # Output: {"preflight":{"expected_size_bytes":...,"free_bytes":...,
-#          "needed_bytes":...,"would_overwrite":false,"has_md5_sidecar":true}, ...}
+#          "needed_bytes":...,"would_overwrite":false,"has_md5_sidecar":true,
+#          "plaintext_transport":true}, ...}
 # If needed_bytes > free_bytes → tell user, abort.
 # If would_overwrite → ask user before passing --force.
+# If plaintext_transport is true → say so before proceeding (see below).
 
 # 3. Start the actual download in background.
 trond snapshot download --network mainnet --to /srv/tron/<node> --detach -o json
@@ -275,6 +277,39 @@ done
 #    Now apply with an intent whose storage.data points there.
 trond apply --intent intent-with-snapshot.yaml --auto-approve --wait -o json
 ```
+
+### `plaintext_transport` — do not skip this
+
+The six mainnet mirrors are bare IPs that publish **no HTTPS endpoint**
+(probed 2026-07-31: `:443` closed, `:80` answers). Only the nile mirror
+serves TLS. Both the `--dry-run` `preflight` object and the completion
+payload carry `"plaintext_transport": true` for those transfers, and trond
+prints a warning to stderr (which, under `--detach`, lands in the job log).
+
+What that means when you report to a user: **`"md5_verified": true` is not
+a security statement on those mirrors.** The `.md5sum` sidecar arrives over
+the same unauthenticated connection as the tarball, so anyone able to
+substitute the archive can substitute the sidecar too. Do not tell a user
+the snapshot is "verified" on the strength of that field alone.
+
+The completion payload also carries `"sha256"` (always computed) and
+`"sha256_verified"` (true only when the operator supplied a pin **and** it
+matched):
+
+```bash
+# Record the digest on a fetch you have reason to trust...
+trond snapshot download --network mainnet --to /srv/a -o json | jq -r .sha256
+
+# ...then pin it on later fetches of that same backup.
+trond snapshot download --network mainnet --backup backup20250115 \
+  --to /srv/b --sha256 <hex> -o json
+# A mismatch fails the download with "sha256 mismatch: ...".
+```
+
+A pin is only worth the channel you got it over — a digest read off the
+same cleartext mirror buys nothing. Surface `plaintext_transport` to the
+user rather than deciding for them; if they have an out-of-band digest,
+pass it through `--sha256` (or the MCP `snapshot_download` `sha256` arg).
 
 When the download finishes, its manifest + log stay under
 `~/.trond/snapshots/<id>.{json,log}` so you can audit later. Stale
@@ -810,7 +845,10 @@ The server registers 23 tools (read-only unless marked):
   human suggestion. Pass `dry_run=true` to propose without acting)
 - **lifecycle** (2): `plan`, `apply` (destructive)
 - **snapshot** (4): `snapshot_sources`, `snapshot_list`, `snapshot_jobs`,
-  `snapshot_download` (destructive, emits MCP progress notifications).
+  `snapshot_download` (destructive, emits MCP progress notifications;
+  takes an optional out-of-band `sha256` pin and returns
+  `plaintext_transport` — an MCP caller has no stderr to read the
+  cleartext-transport warning from, so check that field).
   Job control (`snapshot stop`, `snapshot logs`) is CLI-only.
 - **knowledge** (2): `knowledge_list`, `knowledge_get`
 - **build** (3): `build_list`, `build_inspect`, `build_prune`

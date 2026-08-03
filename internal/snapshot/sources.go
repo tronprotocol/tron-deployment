@@ -80,6 +80,25 @@ type Source struct {
 // IMPORTANT: when refreshing this list, prefer adding new entries over
 // rewriting existing ones — automation may key off `Domain`. Mark old
 // entries with a Description hint when they're being decommissioned.
+//
+// Transport, probed 2026-07-31 (`curl` to :443 and :80 on every entry):
+//
+//   - snapshots.nileex.io serves HTTPS (HTTP/2 200 on a real sidecar path)
+//     and 301-redirects :80 → :443. Both nile rows already use https://
+//     and must stay that way.
+//   - All six mainnet rows are bare IPs with port 443 closed — the TLS
+//     connect times out while :80 answers 200 from the same host. A bare
+//     IP could not present a CA-issued certificate anyway, so there is no
+//     HTTPS to prefer and no upgrade to attempt: rewriting these to https://
+//     would break every mainnet download, and an opportunistic "try HTTPS
+//     first" would buy nothing but a connect timeout per transfer.
+//
+// So trond does not silently upgrade these. It makes the cleartext hop
+// visible instead: PreflightResult/DownloadResult carry
+// `plaintext_transport`, and Download emits PlaintextWarning through
+// DownloadOptions.WarnFn before any bytes move. Re-probe when this table
+// is refreshed; if a mirror gains HTTPS, switch its BaseURL here and the
+// warning stops firing on its own.
 var SourceTable = []Source{
 	{
 		Network:       NetworkMainnet,

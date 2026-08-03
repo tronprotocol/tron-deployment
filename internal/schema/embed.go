@@ -104,7 +104,16 @@ import (
 //	        replaced by a `<REDACTED:ENV_NAME>` placeholder and the flag
 //	        tells the caller the artifact is a preview java-tron would
 //	        reject. Additive optional fields — PATCH.
-const SchemaVersion = "1.12.3"
+//	1.12.4 — snapshot-download output gains `plaintext_transport` (both on
+//	        the dry-run `preflight` object and the foreground completion),
+//	        plus `sha256`, `expected_sha256` and `sha256_verified`. The six
+//	        mainnet mirrors publish no HTTPS endpoint, so their transfers —
+//	        and the .md5sum sidecar that rides the same connection — are
+//	        unauthenticated; an agent can now see that fact instead of
+//	        inferring it, and pin an out-of-band digest via `--sha256` /
+//	        the MCP `sha256` arg. One existing schema, additive optional
+//	        fields only — PATCH.
+const SchemaVersion = "1.12.4"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so

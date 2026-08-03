@@ -92,7 +92,31 @@ Two adjacent directories under the destination get special treatment:
 Pre-existing symlinks at any target path are refused, never followed.
 Any tar entry containing `..` is rejected before `open()`.
 
-## MD5 verification
+## Transport: the mainnet mirrors are cleartext
+
+Probed 2026-07-31, and worth knowing before you trust a snapshot:
+
+| Mirror | Transport |
+|---|---|
+| `snapshots.nileex.io` (both nile rows) | **HTTPS.** Port 443 serves HTTP/2; `:80` 301-redirects to it. |
+| The six mainnet mirrors (`34.143.247.77`, `35.247.128.170`, `34.86.86.229`, `34.48.6.163`, `35.197.17.205`) | **Cleartext HTTP only.** Port 443 is closed on every one; `:80` answers. They are bare IPs, so they could not present a CA-issued certificate anyway. |
+
+trond does not pretend otherwise. It will not rewrite those URLs to
+`https://` (every mainnet download would break) and it does not try HTTPS
+opportunistically (that buys a connect timeout per transfer and nothing
+else). Instead it makes the cleartext hop visible:
+
+- A warning on **stderr** before any bytes move — including under
+  `--detach`, where the child's stderr is the job log.
+- `"plaintext_transport": true` in `-o json`, on both the completion
+  payload and the `--dry-run` `preflight` object, so an agent can branch
+  on it.
+- A `transport:` row in the human `--dry-run` table.
+
+If a mirror ever gains HTTPS, switch its `BaseURL` in
+`internal/snapshot/sources.go` and the warning stops on its own.
+
+## What the MD5 sidecar does and does not buy
 
 Mainnet mirrors publish `<tarball>.tgz.md5sum` sidecars. trond:
 
@@ -102,10 +126,51 @@ Mainnet mirrors publish `<tarball>.tgz.md5sum` sidecars. trond:
 4. Compares — mismatch fails the operation with the database in whatever
    partial state extraction reached.
 
+**Read this before treating `md5 ✓` as a security control.** The sidecar
+comes down the same cleartext connection as the tarball. Anyone in a
+position to substitute the archive — hostile Wi-Fi, an upstream ISP or
+transparent proxy, a BGP hijack of the mirror's IP — is equally able to
+substitute the sidecar, and the two will agree. MD5 is also collision-prone
+on its own merits. So the sidecar check proves the transfer was not
+*corrupted*; it proves nothing about where the bytes came from.
+
 Nile and the occasional outage may leave the sidecar absent. trond will
 still extract; the result message reads `(md5 sidecar absent — not
 verified)`. Pass `--no-verify` to suppress that note when you've made
 the choice deliberately.
+
+## `--sha256`: the check that can detect substitution
+
+A digest is only worth as much as the channel you got it from. trond
+computes the SHA-256 of every download and reports it (`sha256:` in the
+text output, `"sha256"` in JSON) whether or not you asked for one.
+
+```bash
+# First fetch: record the digest trond reports.
+trond snapshot download --network mainnet --to /srv/chain -o json | jq -r .sha256
+
+# Every later fetch of that same backup: pin it.
+trond snapshot download --network mainnet --backup backup20250115 \
+  --to /srv/chain2 --sha256 <hex>
+```
+
+A mismatching pin fails the download (`sha256 mismatch: expected ..., got
+...`); a malformed pin is rejected up front rather than after a multi-hour
+transfer. `"sha256_verified": true` appears in the JSON only when a pin was
+supplied **and** matched — computing a digest is not verifying it.
+
+The pin is worth exactly as much as the path you obtained it over. A digest
+you read off the same cleartext mirror is worth nothing; one you got from a
+trusted operator, a previous verified fetch, or a peer who independently
+downloaded the same backup is worth a great deal. The MCP
+`snapshot_download` tool takes the same value as its `sha256` argument.
+
+`--no-verify` skips only the MD5 sidecar. It does **not** disable a
+`--sha256` pin: if you asked for that check explicitly, you get it.
+
+Neither `--sha256` nor the MD5 sidecar changes *when* verification happens:
+the stream is extracted as it arrives, so a failed check leaves partially
+extracted data behind. Re-run with `--force` to replace it.
 
 ## Long downloads: `--detach`
 
@@ -222,6 +287,19 @@ version change.
   - The tarball got corrupted in flight or the mirror is serving a
     different file than its sidecar advertises. Retry; if the mismatch
     persists, switch `--region` or `--domain`.
+
+`sha256 mismatch: expected ..., got ...`
+  - The archive is not the one your pinned digest describes. Unlike an md5
+    mismatch this is not routine corruption — on a cleartext mirror it is
+    exactly what a substituted archive looks like. Do not `--no-verify`
+    around it. Re-check that the pin belongs to this `--backup` (digests
+    are per-backup), then retry from a different `--domain`; if a second
+    mirror produces the same unexpected digest, the pin is probably stale
+    rather than the download hostile.
+
+`invalid --sha256 "...": expected 64 hex characters`
+  - Malformed pin, rejected before the transfer starts. SHA-256 digests are
+    64 hex characters; you may have pasted an MD5 (32).
 
 ## Local database backup with `db_cp`
 

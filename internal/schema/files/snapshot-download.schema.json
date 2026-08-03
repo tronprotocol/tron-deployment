@@ -23,11 +23,15 @@
         "duration_ms":      { "type": "integer", "minimum": 0 },
         "actual_md5":       { "type": "string", "pattern": "^[0-9a-f]{32}$" },
         "expected_md5":     { "type": "string", "pattern": "^[0-9a-f]{32}$" },
-        "md5_verified":     { "type": "boolean" },
+        "md5_verified":     { "type": "boolean", "description": "The upstream .md5sum sidecar matched. On a plaintext_transport mirror the sidecar arrives over the same unauthenticated channel as the tarball, so this attests transfer integrity only — not provenance." },
         "dest":             { "type": "string" },
         "userdata_present": { "type": "boolean" },
         "source":           { "type": "object" },
-        "backup":           { "type": "string" }
+        "backup":           { "type": "string" },
+        "sha256":           { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the downloaded tarball, always computed. Record it to pin --sha256 on later fetches of the same backup." },
+        "expected_sha256":  { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The out-of-band digest the operator pinned via --sha256, when one was supplied." },
+        "sha256_verified":  { "type": "boolean", "description": "True only when an out-of-band --sha256 pin was supplied AND matched. This is the only verification in this output that can detect a substituted archive." },
+        "plaintext_transport": { "type": "boolean", "description": "True when the tarball was fetched over cleartext http://. The six mainnet mirrors publish no HTTPS endpoint; the nile mirror does." }
       }
     },
     {
@@ -56,7 +60,8 @@
         "userdata_present":    { "type": "boolean" },
         "database_present":    { "type": "boolean" },
         "would_overwrite":     { "type": "boolean" },
-        "has_md5_sidecar":     { "type": "boolean" }
+        "has_md5_sidecar":     { "type": "boolean" },
+        "plaintext_transport": { "type": "boolean", "description": "True when the tarball URL is cleartext http://, meaning neither the tarball nor its .md5sum sidecar is authenticated in transit." }
       }
     }
   }

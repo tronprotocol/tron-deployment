@@ -31,6 +31,7 @@ type snapshotDownloadArgs struct {
 	Dest    string `json:"dest" jsonschema:"absolute destination directory; the snapshot expands to <dest>/output-directory/..."`
 	Force   bool   `json:"force,omitempty" jsonschema:"overwrite an existing chain DB (DESTRUCTIVE)"`
 	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"print the plan and exit without downloading"`
+	SHA256  string `json:"sha256,omitempty" jsonschema:"expected SHA-256 of the tarball (64 hex chars) obtained out of band; a mismatch fails the download. The mainnet mirrors are cleartext HTTP and their .md5sum sidecar rides the same channel, so this pin is the only check that can detect a substituted archive"`
 }
 
 func registerSnapshotTools(s *mcp.Server) {
@@ -140,11 +141,12 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 	}
 
 	opts := snapshot.DownloadOptions{
-		Source:  *src,
-		Backup:  backup,
-		Kind:    kind,
-		DestDir: args.Dest,
-		Force:   args.Force,
+		Source:         *src,
+		Backup:         backup,
+		Kind:           kind,
+		DestDir:        args.Dest,
+		Force:          args.Force,
+		ExpectedSHA256: args.SHA256,
 	}
 
 	pre, err := snapshot.Preflight(ctx, opts)
@@ -179,7 +181,7 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 	if err != nil {
 		return errResult(err)
 	}
-	return jsonResult(map[string]any{
+	payload := map[string]any{
 		"source":           src,
 		"backup":           backup,
 		"dest":             args.Dest,
@@ -189,7 +191,16 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 		"actual_md5":       res.ActualMD5,
 		"files_extracted":  res.FilesExtracted,
 		"userdata_present": pre.UserdataPresent,
-	})
+		"sha256":           res.SHA256,
+		"sha256_verified":  res.SHA256Verified,
+		// An MCP caller has no stderr to read the warning from, so the
+		// cleartext-transport fact has to travel in the payload.
+		"plaintext_transport": res.PlaintextTransport,
+	}
+	if res.ExpectedSHA256 != "" {
+		payload["expected_sha256"] = res.ExpectedSHA256
+	}
+	return jsonResult(payload)
 }
 
 // pickSource resolves --domain / --network / --kind / --region into a
