@@ -36,7 +36,13 @@ import (
 // 60s by default for HTTP-built transactions. txgen rewrites raw_data
 // before signing so generated transactions use cfg.Generate.ExpirationMillis.
 func runGenerate(ctx context.Context, cfg *Config) error {
-	if err := os.MkdirAll(cfg.Generate.OutputDir, 0o755); err != nil {
+	// 0700: receivers.csv lands here with one cleartext secp256k1
+	// private key per receiver, so the directory must not be traversable
+	// by other local uids. The generate-tx-NNNN.csv files keep the
+	// default mode — they hold only txIDs and signed transactions, which
+	// are public once broadcast — but they inherit this directory's
+	// protection anyway.
+	if err := os.MkdirAll(cfg.Generate.OutputDir, 0o700); err != nil {
 		return err
 	}
 

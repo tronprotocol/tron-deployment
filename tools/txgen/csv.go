@@ -18,17 +18,27 @@ type AddressRow struct {
 }
 
 // WriteAddressList writes rows to path in CSV form with a header.
+//
+// Every row carries a receiver's cleartext secp256k1 private key, so the
+// file is created 0600 inside a 0700 directory — never the 0666&umask
+// that os.Create would give it. The explicit Chmod covers the case where
+// path already exists (O_CREATE leaves a pre-existing file's mode alone)
+// and runs before the first row is written, so the keys are never
+// readable by another local uid, not even for an instant.
 func WriteAddressList(path string, rows []AddressRow) error {
 	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 	}
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if err := f.Chmod(0o600); err != nil {
+		return fmt.Errorf("restrict %s to 0600: %w", path, err)
+	}
 	w := csv.NewWriter(f)
 	if err := w.Write([]string{"base58", "hex_address", "private_key"}); err != nil {
 		return err

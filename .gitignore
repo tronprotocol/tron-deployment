@@ -47,3 +47,8 @@ CLAUDE.md
 shadow-fork-data/
 shadow-fork.conf
 shadow-fork-intent.yaml
+
+# txgen output — generate.outputDir defaults here. receivers.csv holds
+# one cleartext secp256k1 private key per receiver and MUST never be
+# committed.
+txgen-output/

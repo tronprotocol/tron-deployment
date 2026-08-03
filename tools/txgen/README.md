@@ -309,7 +309,7 @@ All files land under `generate.outputDir` (default `txgen-output/`), except the 
 
 | File | Contents |
 |---|---|
-| `receivers.csv` | Inline-generated receiver addresses + private keys. Useful for `db fork` pre-funding. |
+| `receivers.csv` | Inline-generated receiver addresses + private keys. Useful for `db fork` pre-funding. **Secret:** written `0600` inside a `0700` `outputDir`, and an existing file is re-tightened to `0600` on every run — never commit it or ship it in a CI artifact (`txgen-output/` is gitignored). On a filesystem with no POSIX modes (vfat/exFAT, some SMB mounts) the `chmod` fails and the run aborts rather than dumping keys world-readable; point `outputDir` at a real filesystem. |
 | `generate-tx-NNNN.csv` | Signed transactions, `txID,signed_tx_json` per row. |
 | `broadcast-txid.csv` | TxIDs the node accepted into its pool (one per line). |
 | `broadcast-report.txt` | Final report (TPS, on-chain rate, block size stats). |
