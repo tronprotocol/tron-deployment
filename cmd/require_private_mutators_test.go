@@ -69,12 +69,13 @@ func wantPrivateRequired(t *testing.T, err error) {
 // mutation would fail here because the call wouldn't return PRIVATE_NETWORK_REQUIRED.
 func TestMutators_RefuseMainnetUnderRequirePrivate(t *testing.T) {
 	mutators := map[string]func(*cobra.Command, []string) error{
-		"start":    runStart,
-		"stop":     runStop,
-		"restart":  runRestart,
-		"rollback": runRollback,
-		"upgrade":  runUpgrade,
-		"remove":   runRemove,
+		"start":     runStart,
+		"stop":      runStop,
+		"restart":   runRestart,
+		"rollback":  runRollback,
+		"upgrade":   runUpgrade,
+		"remove":    runRemove,
+		"auto-heal": runAutoHeal,
 	}
 	for name, run := range mutators {
 		t.Run(name, func(t *testing.T) {
@@ -83,6 +84,14 @@ func TestMutators_RefuseMainnetUnderRequirePrivate(t *testing.T) {
 				old := upgradeVersion
 				upgradeVersion = "GreatVoyage-v4.8.0"
 				t.Cleanup(func() { upgradeVersion = old })
+			}
+			if name == "auto-heal" {
+				// The table covers the ACTING path. --dry-run only proposes
+				// (nothing started, no state written) and stays allowed —
+				// see TestAutoHeal_RequirePrivate_AllowsDryRun.
+				old := healDryRun
+				healDryRun = false
+				t.Cleanup(func() { healDryRun = old })
 			}
 			wantPrivateRequired(t, run(newCmd(), []string{"n0"}))
 		})

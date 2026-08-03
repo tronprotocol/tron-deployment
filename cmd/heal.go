@@ -86,6 +86,22 @@ func runAutoHeal(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	start := time.Now()
 
+	// --require-private / TROND_REQUIRE_PRIVATE (the C1 gate): auto-heal is a
+	// mutator on this path — executeHealAction calls Runtime.Start and rewrites
+	// state — so it must refuse a non-private node exactly like `trond start`.
+	// State-only and BEFORE resolveNodeContext, so an unreachable mainnet node
+	// still returns PRIVATE_NETWORK_REQUIRED rather than TARGET_UNREACHABLE.
+	//
+	// Scoped to the acting path: with --dry-run the loop below `continue`s
+	// before executeHealAction, so nothing is started and no state is written.
+	// The preview stays available under the gate — it is how an operator (or
+	// agent) sees what heal *would* do without being allowed to do it.
+	if !healDryRun {
+		if err := requirePrivateForNode(name); err != nil {
+			return err
+		}
+	}
+
 	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err

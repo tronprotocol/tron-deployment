@@ -653,8 +653,11 @@ An automated caller that should only ever touch a throwaway private chain
   var. When set, every mutating verb refuses a non-private node up front
   with `PRIVATE_NETWORK_REQUIRED` (exit 2): `apply`, `network create`, and
   the per-node mutators `start` / `stop` / `restart` / `remove` /
-  `rollback` / `upgrade`. The MCP `apply` tool takes the same gate via a
-  `require_private` argument. Export `TROND_REQUIRE_PRIVATE=1` once at
+  `rollback` / `upgrade` / `auto-heal`. The MCP `apply` tool takes the same
+  gate via a `require_private` argument, and the MCP `auto_heal` tool honours
+  the flag/env floor. Proposal-only calls stay allowed: `auto-heal --dry-run`
+  / `auto_heal dry_run=true` never starts a node or writes state, so the
+  preview still returns under the gate. Export `TROND_REQUIRE_PRIVATE=1` once at
   session start and an unattended agent is *mechanically* incapable of
   mutating a mainnet/nile rig — no per-call discipline, instead of trusting
   a standing rule.

@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tronprotocol/tron-deployment/internal/diagnosis"
+	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/runtime"
 	"github.com/tronprotocol/tron-deployment/internal/state"
@@ -52,6 +53,22 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 	node := store.GetNode(st, args.Name)
 	if node == nil {
 		return errResult(notFound("auto_heal", args.Name))
+	}
+
+	// --require-private / TROND_REQUIRE_PRIVATE (the C1 gate): the acting path
+	// below starts the node and rewrites state, so it refuses a non-private
+	// node just like the CLI's `trond auto-heal`. Enforced on the node's
+	// RECORDED network (never a caller-supplied one) and BEFORE target
+	// resolution, so an unreachable mainnet node still gets
+	// PRIVATE_NETWORK_REQUIRED.
+	//
+	// Scoped to the acting path: with dry_run=true the loop `continue`s before
+	// mcpRunHealAction and the store.Save, so the proposal-only preview stays
+	// available under the gate.
+	if !args.DryRun {
+		if err := guard.Enforce(node.Network); err != nil {
+			return errResult(err)
+		}
 	}
 
 	tgt, err := mcpResolveTargetFromNode(node)
