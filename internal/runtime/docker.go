@@ -28,14 +28,29 @@ func NewDockerRuntime(t target.Target, workDir string) *DockerRuntime {
 func (r *DockerRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 	dir := filepath.Join(r.workDir, opts.Name)
 
-	// Create deployment directory
-	if _, err := r.target.Exec(ctx, "mkdir", "-p", dir); err != nil {
+	// Create deployment directory, owner-only.
+	//
+	// The mode is set by `mkdir -m` at creation instead of a follow-up
+	// `chmod 0700 <dir>`: a separate chmod would leave a window in which
+	// the directory (and the secret-bearing config written into it) is
+	// world-readable, and it would apply the mode to a path that could
+	// have been substituted in the meantime. A bare `mkdir -p` takes the
+	// target's umask, which is 0755 on a typical host — on an SSH target
+	// or a shared --state-dir that makes the config below reachable by
+	// every local account. `-p` still succeeds on an existing directory
+	// (whose mode it leaves alone), so redeploys are unaffected.
+	if _, err := r.target.Exec(ctx, "mkdir", "-p", "-m", "0700", dir); err != nil {
 		return fmt.Errorf("create deploy dir: %w", err)
 	}
 
-	// Write config file
+	// Write config file, owner-only: for witness nodes the rendered HOCON
+	// inlines the block-signing private key (localwitness = ["<hex>"]),
+	// plus whatever secrets config_overrides carries. Nothing needs it
+	// world-readable — compose mounts it into the container read-only and
+	// the java-tron image declares no USER, so the process that reads it
+	// is root inside the container.
 	configPath := filepath.Join(dir, opts.Name+".conf")
-	if err := r.target.WriteFile(ctx, configPath, opts.ConfigData, 0644); err != nil {
+	if err := r.target.WriteFile(ctx, configPath, opts.ConfigData, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 

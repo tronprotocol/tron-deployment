@@ -9,11 +9,12 @@ import (
 // fakeTarget is a minimal in-memory target for unit testing.
 type fakeTarget struct {
 	files map[string][]byte
+	perms map[string]os.FileMode
 	cmds  [][]string
 }
 
 func newFakeTarget() *fakeTarget {
-	return &fakeTarget{files: make(map[string][]byte)}
+	return &fakeTarget{files: make(map[string][]byte), perms: make(map[string]os.FileMode)}
 }
 
 func (f *fakeTarget) Exec(ctx context.Context, cmd string, args ...string) ([]byte, error) {
@@ -28,6 +29,7 @@ func (f *fakeTarget) ReadFile(ctx context.Context, path string) ([]byte, error) 
 }
 func (f *fakeTarget) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
 	f.files[path] = data
+	f.perms[path] = perm
 	return nil
 }
 func (f *fakeTarget) DiskFree(ctx context.Context, path string) (uint64, error)       { return 0, nil }

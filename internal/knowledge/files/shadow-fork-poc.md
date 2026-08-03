@@ -100,8 +100,10 @@ The `observe` step below is the actual readiness check.
 **Security note — rendered HOCON contains the private key.**
 trond inlines the witness's hex private key into the per-node
 HOCON config at `~/.trond/deployments/shadow-fork-poc/shadow-fork-poc.conf`
-(java-tron requires the key in-config for production). Mode
-defaults to 0644. Treat that file like the keypair stash —
+(java-tron requires the key in-config for production). It is
+written 0600 inside a 0700 deployment directory (the container
+reads it through a read-only bind mount as root, so nothing else
+needs access). Treat that file like the keypair stash —
 remove with the `teardown` recipe at the bottom of this doc
 once finished.
 
