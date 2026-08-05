@@ -15,9 +15,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/db"
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/stores"
 	"github.com/tronprotocol/tron-deployment/internal/fsclone"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // equivalenceEnv is the set of environment variables that gate the

@@ -86,7 +86,7 @@ jobs:
   proto-drift:
     name: Proto-binding drift
     runs-on: ubuntu-latest
-    # Regenerates internal/dbfork/proto/pb/ via the project's gen
+    # Regenerates internal/tronproto/pb/ via the project's gen
     # script and fails if the result differs from what's committed.
     # Catches two failure modes:
     #   1. Upstream .proto edit (via the git subtree pull workflow)
@@ -114,7 +114,7 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           # Pinned to the EXACT 35.0 that generated the committed
-          # internal/dbfork/proto/pb/*.pb.go files (their header reads
+          # internal/tronproto/pb/*.pb.go files (their header reads
           # `protoc v7.35.0`). The drift job regenerates and diffs the
           # committed bytes, including that header line — so a wildcard
           # `35.x` would resolve to the latest 35.minor and false-report
@@ -125,15 +125,15 @@ jobs:
       - name: Install pinned tools (protoc-gen-go via go.mod)
         run: go install tool
       - name: Regenerate proto bindings
-        run: bash scripts/gen-dbfork-protos.sh
+        run: bash scripts/gen-tron-protos.sh
       - name: Fail on drift
         # `git diff --exit-code` returns 1 if any file differs. We dump
         # the diff first so the failure log shows what changed without
         # the developer needing to re-run locally.
         run: |
-          if ! git diff --exit-code internal/dbfork/proto/pb/; then
+          if ! git diff --exit-code internal/tronproto/pb/; then
             echo "::error::Committed .pb.go files drifted from regeneration."
-            echo "::error::Run 'bash scripts/gen-dbfork-protos.sh' locally + commit the result."
+            echo "::error::Run 'bash scripts/gen-tron-protos.sh' locally + commit the result."
             exit 1
           fi
 

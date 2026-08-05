@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/db"
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // deterministicMarshal sorts map keys (Account.asset_v2 and any other

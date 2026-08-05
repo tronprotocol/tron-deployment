@@ -12,8 +12,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/db"
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/stores"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // seedLevelDBStore creates an empty (but openable) java-tron-layout

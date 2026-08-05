@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/db"
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // TRC20Spec is one entry from fork.conf's `trc20Contracts:` list.

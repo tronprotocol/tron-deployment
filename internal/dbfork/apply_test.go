@@ -12,8 +12,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/db"
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/stores"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // TestApply_GuardsAndNoOp pins the surface contracts of Apply that

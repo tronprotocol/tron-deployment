@@ -1,17 +1,30 @@
-# dbfork proto bindings
+# TRON proto bindings
 
-Source of truth for the protobuf wire formats trond's `dbfork` engine
-reads from and writes to java-tron's on-disk capsule stores.
+Source of truth for the java-tron protobuf wire formats used across this
+repo. Two consumers today, with different needs from the same protos:
+
+- **`internal/dbfork`** — the capsule messages it reads from and writes
+  to java-tron's on-disk stores (`Account`, `Witness`, `SmartContract`, …).
+- **`tools/txgen`** — the same messages plus the `Wallet` gRPC service
+  stubs its gRPC transport dials.
+
+The package lived under `internal/dbfork/proto/` while dbfork was the
+only consumer. It holds nothing dbfork-specific — the Go package has
+always been called `tronpb` — so it moved out when the second consumer
+arrived rather than leaving txgen importing a gRPC client from under the
+DB-mutation engine.
 
 ## Layout
 
 ```
-internal/dbfork/proto/
+internal/tronproto/
 ├── upstream/                # git subtree of github.com/tronprotocol/protocol
 │   ├── core/
 │   │   ├── Tron.proto       # Account, Witness, Permission, Vote, AccountAsset
 │   │   └── ...
-│   └── api/                 # (unused — kept for forward extension)
+│   └── api/                 # api.proto — Wallet gRPC service (+ messages)
+├── thirdparty/              # google/api annotations, imported by api.proto
+│   └── google/api/          #   NOT in upstream/: that is a subtree
 ├── pb/                      # generated *.pb.go (committed, FLAT)
 │   ├── Tron.pb.go
 │   ├── account.pb.go
@@ -36,8 +49,25 @@ single Go package without Go import cycles.
 Last subtree pull: **GreatVoyage-v4.8.1** (Feb 2026).
 
 The full pin history is in this directory's git log (look for
-`Squashed 'internal/dbfork/proto/upstream/' content from commit ...`
-messages from `git subtree add/pull` operations).
+`Squashed '...' content from commit ...` messages from
+`git subtree add/pull` operations).
+
+> **The subtree was added before this directory moved.** Every existing
+> squash commit carries the pre-move path in its tracking footer:
+>
+> ```
+> git-subtree-dir: internal/dbfork/proto/upstream
+> git-subtree-split: 4c726956542b8dff5a4bd5c54aa07cd9da257d08
+> ```
+>
+> `git subtree pull --prefix=internal/tronproto/upstream` scans for a
+> footer naming *that* prefix and will not find one, so it cannot locate
+> the previous split and will not produce an incremental merge. Either
+> pass the recorded split explicitly, or run the pull and check the
+> resulting diff contains only the intended upstream delta before
+> committing — do not assume an empty-looking merge means "already up to
+> date". The first pull after this move re-establishes the footer under
+> the new path; subsequent ones behave normally.
 
 ## Syncing upstream
 
@@ -47,26 +77,26 @@ When java-tron releases a new compatible version (typically a yearly
 ```bash
 # From repo root
 git subtree pull \
-  --prefix=internal/dbfork/proto/upstream \
+  --prefix=internal/tronproto/upstream \
   https://github.com/tronprotocol/protocol.git \
   GreatVoyage-v4.8.2 \
   --squash
 
 # Regenerate bindings
-go generate ./internal/dbfork/proto/...
+go generate ./internal/tronproto/...
 
 # Verify equivalence against java DbFork (release gate)
 go test ./internal/dbfork/ -run TestEquivalenceVsJavaDbFork
 
 # If green, commit both the subtree merge AND the regenerated pb/.
-git add internal/dbfork/proto/upstream internal/dbfork/proto/pb
+git add internal/tronproto/upstream internal/tronproto/pb
 git commit -m "dbfork: bump proto to GreatVoyage-v4.8.2"
 ```
 
 ### When upstream drops a .proto we used to generate
 
 Remove the file path from `PROTO_FILES` in
-`scripts/gen-dbfork-protos.sh` and re-run `go generate`. The `pb/`
+`scripts/gen-tron-protos.sh` and re-run `go generate`. The `pb/`
 dir is wiped + regenerated on every run, so stale `.pb.go` files are
 cleaned up automatically — no manual `git rm` needed.
 
@@ -81,14 +111,14 @@ undefined: tronpb.<NewTypeName>
 ```
 
 Fix by adding the new .proto path to `PROTO_FILES` in
-`scripts/gen-dbfork-protos.sh` and re-running `go generate`. The
+`scripts/gen-tron-protos.sh` and re-running `go generate`. The
 M-flag catch-all in the script already maps EVERY .proto in
 upstream/ to our package, so we just need to tell protoc to emit
 the .pb.go for it.
 
 ## What we generate (and why this subset)
 
-`scripts/gen-dbfork-protos.sh` lists the .proto files we run through
+`scripts/gen-tron-protos.sh` lists the .proto files we run through
 protoc. The current subset covers the messages dbfork's mutation
 engine reads + writes:
 
@@ -138,8 +168,8 @@ go install tool
 `$GOPATH/bin` (or `$GOBIN`) must be on `$PATH` so protoc can find
 `protoc-gen-go`.
 
-After running `scripts/gen-dbfork-protos.sh`, `git diff
-internal/dbfork/proto/pb/` should be empty. If you see a diff, the
+After running `scripts/gen-tron-protos.sh`, `git diff
+internal/tronproto/pb/` should be empty. If you see a diff, the
 `go install tool` step was skipped or your `$PATH` is picking up a
 different `protoc-gen-go` than the pinned one. The `proto-drift`
 CI job (`.github/workflows/ci.yml`) installs from the same pin, so

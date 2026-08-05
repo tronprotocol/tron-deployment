@@ -30,11 +30,11 @@
 //
 // Then from repo root:
 //
-//	go generate ./internal/dbfork/proto/...
+//	go generate ./internal/tronproto/...
 //
 // Platform: bash-only (Linux + macOS). Windows contributors regenerate
-// via WSL — gen-dbfork-protos.sh is a bash 3.2+ script and the
+// via WSL — gen-tron-protos.sh is a bash 3.2+ script and the
 // go-generate directive below invokes it via `bash -c`.
 //
-//go:generate bash -c "../../../scripts/gen-dbfork-protos.sh"
+//go:generate bash -c "../../scripts/gen-tron-protos.sh"
 package proto

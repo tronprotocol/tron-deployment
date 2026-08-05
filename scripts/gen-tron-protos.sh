@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/gen-dbfork-protos.sh — regenerate internal/dbfork/proto/pb/*.pb.go
+# scripts/gen-tron-protos.sh — regenerate internal/tronproto/pb/*.pb.go
 #
-# Driven by `go generate ./internal/dbfork/proto/...`. Idempotent. Assumes
+# Driven by `go generate ./internal/tronproto/...`. Idempotent. Assumes
 # protoc + protoc-gen-go are on PATH (see proto/README.md for install).
 #
 # Strategy: only generate the messages dbfork's mutation engine touches.
@@ -20,18 +20,18 @@ for bin in protoc protoc-gen-go protoc-gen-go-grpc; do
             echo "       (Reads the version from go.mod's tool directive.)" >&2
             ;;
         esac
-        echo "       See internal/dbfork/proto/README.md for full instructions." >&2
+        echo "       See internal/tronproto/README.md for full instructions." >&2
         exit 1
     fi
 done
 
 cd "$(dirname "$0")/.."   # repo root
-UPSTREAM="internal/dbfork/proto/upstream"
+UPSTREAM="internal/tronproto/upstream"
 # googleapis annotations, imported by api/api.proto. Kept OUTSIDE upstream/
 # because upstream/ is a git subtree of java-tron's protos — adding files
 # there would conflict on the next `git subtree pull`.
-THIRDPARTY="internal/dbfork/proto/thirdparty"
-OUT="internal/dbfork/proto/pb"
+THIRDPARTY="internal/tronproto/thirdparty"
+OUT="internal/tronproto/pb"
 
 # --- WARNING: $OUT is wiped + regenerated on every run --------------
 # Do NOT hand-edit *.pb.go files; they're machine-generated and will
@@ -73,7 +73,7 @@ PROTO_FILES=(
 )
 
 # All bindings share this go module prefix so imports resolve.
-GO_PACKAGE_PREFIX="github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
+GO_PACKAGE_PREFIX="github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 
 # Build M-flags for EVERY .proto file in upstream/. All map to the
 # SAME Go package, which mirrors the .proto files' single

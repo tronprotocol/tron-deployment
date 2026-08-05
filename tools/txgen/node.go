@@ -15,7 +15,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	tronpb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
+	tronpb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // NodeClient wraps the subset of java-tron's HTTP API needed by txgen:

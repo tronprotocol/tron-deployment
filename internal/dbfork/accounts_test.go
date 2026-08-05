@@ -9,8 +9,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/db"
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
 	"github.com/tronprotocol/tron-deployment/internal/dbfork/stores"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // openAccountTriplet seeds the 3 stores MutateAccounts touches under

@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/tronprotocol/tron-deployment/internal/dbfork/proto/pb"
+	pb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
 // TestProtoRoundTrip is the smoke gate for the proto pipeline: a
@@ -18,7 +18,7 @@ import (
 //   - Standard google.golang.org/protobuf/proto wire format works
 //     against tronprotocol/protocol's messages
 //
-// If this fails, run scripts/gen-dbfork-protos.sh and check the
+// If this fails, run scripts/gen-tron-protos.sh and check the
 // pinned upstream tag matches what's in proto/README.md.
 func TestProtoRoundTrip(t *testing.T) {
 	t.Run("Account", func(t *testing.T) {

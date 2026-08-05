@@ -11,7 +11,7 @@
 //
 //	internal/dbfork/stores   on-disk store names + fixed byte keys
 //	internal/dbfork/db       LevelDB / RocksDB engine abstraction
-//	internal/dbfork/proto    protobuf bindings (generated from
+//	internal/tronproto       protobuf bindings (generated from
 //	                         tronprotocol/protocol)
 //	(this package)           public Apply entry + per-section
 //	                         mutation files (witnesses.go,
