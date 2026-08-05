@@ -49,12 +49,18 @@ func (r *DockerRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 	// world-readable — compose mounts it into the container read-only and
 	// the java-tron image declares no USER, so the process that reads it
 	// is root inside the container.
+	//
+	// Written through the tracker: compose mounts this file rather than
+	// baking it into the image, so its contents are invisible to compose's
+	// own recreate decision. java-tron parses it once at JVM startup.
+	tracker := newChangeTracker(r.target)
 	configPath := filepath.Join(dir, opts.Name+".conf")
-	if err := r.target.WriteFile(ctx, configPath, opts.ConfigData, 0600); err != nil {
+	if err := tracker.write(ctx, configPath, opts.ConfigData, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
-	// Write compose file
+	// Write compose file. Not tracked — compose diffs this itself and
+	// recreates the container when the service definition changes.
 	composePath := filepath.Join(dir, "docker-compose.yaml")
 	if err := r.target.WriteFile(ctx, composePath, opts.ComposeData, 0644); err != nil {
 		return fmt.Errorf("write compose: %w", err)
@@ -62,6 +68,12 @@ func (r *DockerRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 
 	// Docker compose up
 	args := []string{"compose", "-f", composePath, "-p", opts.Name, "up", "-d"}
+	if tracker.changed {
+		// The config changed but the compose spec may not have. Without
+		// this the container keeps running on the config it parsed at
+		// start, and `up -d` still reports success.
+		args = append(args, "--force-recreate")
+	}
 	if _, err := r.target.Exec(ctx, "docker", args...); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}

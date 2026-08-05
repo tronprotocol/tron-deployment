@@ -43,6 +43,12 @@ func (r *MonitoringRuntime) Deploy(ctx context.Context, opts MonitoringDeployOpt
 		return fmt.Errorf("create monitoring dir: %w", err)
 	}
 
+	// Prometheus and Grafana read these from bind mounts and parse them at
+	// process start, so compose's recreate decision cannot see a change in
+	// any of them. Tracked; the compose file itself is not, because
+	// compose diffs that on its own.
+	tracker := newChangeTracker(r.target)
+
 	// Write compose file
 	composePath := filepath.Join(dir, "docker-compose.yaml")
 	if err := r.target.WriteFile(ctx, composePath, opts.ComposeData, 0644); err != nil {
@@ -55,7 +61,7 @@ func (r *MonitoringRuntime) Deploy(ctx context.Context, opts MonitoringDeployOpt
 		return fmt.Errorf("create monitoring conf dir: %w", err)
 	}
 	promPath := filepath.Join(confDir, "prometheus.yml")
-	if err := r.target.WriteFile(ctx, promPath, opts.PrometheusConfig, 0644); err != nil {
+	if err := tracker.write(ctx, promPath, opts.PrometheusConfig, 0644); err != nil {
 		return fmt.Errorf("write prometheus config: %w", err)
 	}
 
@@ -65,7 +71,7 @@ func (r *MonitoringRuntime) Deploy(ctx context.Context, opts MonitoringDeployOpt
 		return fmt.Errorf("create grafana ds dir: %w", err)
 	}
 	dsPath := filepath.Join(dsDir, "prometheus.yml")
-	if err := r.target.WriteFile(ctx, dsPath, opts.GrafanaDatasource, 0644); err != nil {
+	if err := tracker.write(ctx, dsPath, opts.GrafanaDatasource, 0644); err != nil {
 		return fmt.Errorf("write grafana datasource: %w", err)
 	}
 
@@ -75,7 +81,7 @@ func (r *MonitoringRuntime) Deploy(ctx context.Context, opts MonitoringDeployOpt
 		return fmt.Errorf("create grafana provider dir: %w", err)
 	}
 	provPath := filepath.Join(provDir, "dashboards.yml")
-	if err := r.target.WriteFile(ctx, provPath, opts.GrafanaProvider, 0644); err != nil {
+	if err := tracker.write(ctx, provPath, opts.GrafanaProvider, 0644); err != nil {
 		return fmt.Errorf("write grafana provider: %w", err)
 	}
 
@@ -86,13 +92,18 @@ func (r *MonitoringRuntime) Deploy(ctx context.Context, opts MonitoringDeployOpt
 	}
 	for fname, data := range opts.Dashboards {
 		dashPath := filepath.Join(dashDir, fname)
-		if err := r.target.WriteFile(ctx, dashPath, data, 0644); err != nil {
+		if err := tracker.write(ctx, dashPath, data, 0644); err != nil {
 			return fmt.Errorf("write dashboard %s: %w", fname, err)
 		}
 	}
 
 	// Docker compose up
 	args := []string{"compose", "-f", composePath, "-p", opts.Name + "-monitoring", "up", "-d"}
+	if tracker.changed {
+		// A changed scrape config or dashboard otherwise sits on disk
+		// while Prometheus keeps serving what it parsed at start.
+		args = append(args, "--force-recreate")
+	}
 	if _, err := r.target.Exec(ctx, "docker", args...); err != nil {
 		return fmt.Errorf("monitoring compose up: %w", err)
 	}

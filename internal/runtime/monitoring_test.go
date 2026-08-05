@@ -25,7 +25,13 @@ func (f *fakeTarget) Exec(ctx context.Context, cmd string, args ...string) ([]by
 func (f *fakeTarget) Upload(ctx context.Context, localPath, remotePath string) error   { return nil }
 func (f *fakeTarget) Download(ctx context.Context, remotePath, localPath string) error { return nil }
 func (f *fakeTarget) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	return f.files[path], nil
+	data, ok := f.files[path]
+	if !ok {
+		// Faithful to the real targets: reading a file that is not there
+		// is an error, not an empty read. Deploy distinguishes the two.
+		return nil, os.ErrNotExist
+	}
+	return data, nil
 }
 func (f *fakeTarget) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
 	f.files[path] = data
