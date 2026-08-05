@@ -203,6 +203,18 @@ The agent-ergonomics arc lands across four sequenced PRs:
   verbatim. Numbers deliberately stay on `fmt` — `%v` is already
   JSON-compatible there and routing them through the encoder would change
   every rendered config for no correctness gain.
+- **`build.revision` labelled the artifact without building it.** The git
+  worktree checkout ran only when `build.patches` was non-empty, so an
+  explicit branch/tag/sha compiled whatever the working tree happened to
+  hold and then stamped the artifact — cache key, manifest, and
+  `status.build_revision` — with the revision that was asked for. Two
+  `trond build --revision <ref>` runs against different refs could hand back
+  byte-identical artifacts under different labels, silently reducing a
+  base-vs-head comparison to comparing an artifact with itself. The
+  worktree now runs whenever an explicit non-HEAD revision is requested.
+  `revision: HEAD` still builds the working tree, dirty edits included —
+  that is the dev inner loop, and the dirty state is already folded into
+  the cache key.
 - Witness private key inlined into rendered HOCON — typesafe-config does
   not perform `${ENV}` substitution, the literal `${SR_KEY}` was being
   read as a 9-char witness key and the SR shut down with WITNESS_INIT(1)

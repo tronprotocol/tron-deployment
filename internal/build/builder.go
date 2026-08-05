@@ -105,12 +105,14 @@ type resolved struct {
 	key         CacheKey
 	cacheKeyStr string
 	// buildSourceDir is the effective directory gradle runs in.
-	// Equal to src.Path for the no-patches path (today's behavior).
-	// Equal to the per-cache-key git worktree path when req.Patches
-	// is non-empty (FR-026). Runners reference this — NOT src.Path —
-	// so the patched code is what gradle sees. Manifests record
-	// src.Path (the user-canonical source), not the trond-internal
-	// worktree path.
+	// Equal to src.Path only for the plain revision=HEAD, no-patches
+	// case (the dev inner loop, where building the working tree is the
+	// point). Equal to the per-cache-key git worktree path whenever
+	// patches are declared (FR-026) or an explicit non-HEAD revision was
+	// requested — in both cases gradle must see the pinned tree, not
+	// whatever happens to be checked out. Runners reference this — NOT
+	// src.Path. Manifests record src.Path (the user-canonical source),
+	// not the trond-internal worktree path.
 	buildSourceDir string
 	// patchRecords are the (basename, sha256) records computed
 	// ONCE in resolveBuild and stored in the eventual Manifest. The
@@ -199,16 +201,40 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 				"Only run against trusted sources.")
 	}
 
-	// FR-026: when patches are declared, set up an isolated git
-	// worktree at the resolved revision + apply patches there. The
-	// runners use r.buildSourceDir, so this redirect is transparent
-	// to the downstream build code. Cleanup is deferred so partial
-	// builds don't leak worktrees.
-	if len(r.req.Patches) > 0 {
+	// Set up an isolated git worktree at the resolved revision. The
+	// runners use r.buildSourceDir, so this redirect is transparent to
+	// the downstream build code. Cleanup is deferred so partial builds
+	// don't leak worktrees.
+	//
+	// Two triggers:
+	//
+	//   - FR-026, patches declared: they must apply against the tree the
+	//     user pinned, not against whatever HEAD happens to be.
+	//   - an explicit build.revision, with or without patches. Without a
+	//     worktree gradle runs in the caller's working tree, so
+	//     `revision: <sha>` would only *label* the artifact: the cache
+	//     key, the manifest and status.build_revision all report that sha
+	//     while the bytes came from whatever was checked out. That is
+	//     worse than an error — a base-vs-head comparison would silently
+	//     compare an artifact against itself. schema.go documents revision
+	//     as selecting "which git revision to build", so honour it rather
+	//     than only labelling with it.
+	//
+	// "HEAD" deliberately keeps building the working tree: that is the dev
+	// inner loop, and Source.Resolve folds dirty state into the cache key
+	// for exactly that case.
+	needsWorktree := len(r.req.Patches) > 0 || r.req.RevisionSpec != "HEAD"
+	if needsWorktree {
 		wt, cleanup, err := setupWorktree(ctx, r.src.Path,
 			r.src.ResolvedRevision, r.cacheKeyStr, r.req.Patches)
 		if err != nil {
-			_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "PATCH_FAILED", started)
+			// PATCH_FAILED would be a misleading code when the caller
+			// declared no patches and the worktree setup itself failed.
+			failCode := "BUILD_FAILED"
+			if len(r.req.Patches) > 0 {
+				failCode = "PATCH_FAILED"
+			}
+			_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, failCode, started)
 			return nil, err
 		}
 		defer cleanup()
@@ -376,13 +402,15 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 		ImageStrategy:      req.ImageStrategy,
 	}
 	return &resolved{
-		req:            req,
-		src:            src,
-		imageRef:       imageRef,
-		imageDigest:    imageDigest,
-		key:            key,
-		cacheKeyStr:    key.String(),
-		buildSourceDir: src.Path, // default; setupWorktree overrides when Patches set
+		req:         req,
+		src:         src,
+		imageRef:    imageRef,
+		imageDigest: imageDigest,
+		key:         key,
+		cacheKeyStr: key.String(),
+		// default; setupWorktree overrides it when patches are declared or
+		// an explicit (non-HEAD) revision was requested.
+		buildSourceDir: src.Path,
 		patchRecords:   patchRecords,
 	}, nil
 }
