@@ -98,10 +98,22 @@ type Options struct {
 	// and (for an already-deployed node of the same name) the network
 	// RECORDED IN STATE are private — the intent's label alone is caller
 	// input and cannot authorise touching a node deployed on mainnet/nile.
-	// Lives in the core (not just cmd) so EVERY caller — CLI apply, MCP —
-	// inherits the guarantee and it can't be bypassed by choosing a
+	// Lives in the core (not just cmd) so EVERY caller — CLI apply,
+	// network create, MCP — inherits the guarantee and it can't be bypassed by choosing a
 	// different entry point. Pure opt-in; callers set it.
 	RequirePrivate bool
+
+	// SkipMonitoring suppresses the per-node monitoring stack while
+	// leaving Intent.Monitoring intact for rendering.
+	//
+	// `network create` needs both halves: RenderHOCON keys its
+	// auto-enable of node.metrics.prometheus off Intent.Monitoring, so
+	// the field must stay set, but the network owns ONE stack scraping
+	// every node. Without this flag each node would deploy its own
+	// Prometheus and the last one to run would win, leaving a stack that
+	// scrapes exactly one node — a monitoring setup that looks healthy
+	// and silently observes a fraction of the network.
+	SkipMonitoring bool
 }
 
 // Result is the structured output of one Apply call. Stable JSON
@@ -370,6 +382,13 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		LastApplied: time.Now().UTC(),
 		HTTPPort:    node.Ports.HTTP,
 		GRPCPort:    node.Ports.GRPC,
+		// P2PPort is load-bearing, not cosmetic: `network add` builds the
+		// joining node's peer list from the P2PPort of every node already
+		// in state and SKIPS any entry where it is zero. Omitting it here
+		// meant a node deployed through Apply was invisible as a peer —
+		// the late joiner would come up with an empty peer list and never
+		// connect, with nothing in the output to say why.
+		P2PPort:     node.Ports.P2P,
 		MetricsPort: node.Ports.Metrics,
 		Labels:      node.Labels,
 		InstallPath: node.InstallPath,
@@ -630,6 +649,9 @@ type monitoringResult struct {
 // enabled in the intent. For docker runtime it co-locates with the node;
 // for jar runtime it deploys to the trond machine (local target).
 func deployMonitoring(ctx context.Context, opts Options, node *intent.NodeSpec, runtimeType string) monitoringResult {
+	if opts.SkipMonitoring {
+		return monitoringResult{}
+	}
 	if opts.Intent.Monitoring == nil || opts.Intent.Monitoring.Enabled == nil || !*opts.Intent.Monitoring.Enabled {
 		return monitoringResult{}
 	}

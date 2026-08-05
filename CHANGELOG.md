@@ -12,6 +12,12 @@ The agent-ergonomics arc lands across four sequenced PRs:
 **#153** (`trond mcp`) → **#154** (`trond recipe`).
 
 ### Added
+- `apply.Options.SkipMonitoring` suppresses the per-node monitoring stack
+  while leaving `Intent.Monitoring` intact for rendering. `network create`
+  needs both halves: `RenderHOCON` keys its metrics auto-enable off the
+  field, but the network owns one stack scraping every node — without the
+  flag each node deployed its own Prometheus and the last one won, leaving
+  a stack that looks healthy while observing a fraction of the network.
 - **Agent integration arc (ai-ops): machine-observable, provably-private rigs.**
   - (#190/#193/#196) **Private-net safety gate (C1).** `is_private` is a
     queryable fact in `status`/`list`/`inspect`. A persistent
@@ -215,6 +221,20 @@ The agent-ergonomics arc lands across four sequenced PRs:
   `revision: HEAD` still builds the working tree, dirty edits included —
   that is the dev inner loop, and the dirty state is already folded into
   the cache key.
+- **`network create` bypassed `internal/apply.Apply`.** Its hand-rolled
+  render + deploy + state loop had drifted from the core in three ways: it
+  never called `internal/build`, so a node declaring `build:` rendered an
+  empty `image:` and deployed nothing usable — no error, no warning, and a
+  green `config validate`; it hardcoded JDK 17 for JVM arg selection
+  instead of probing the target; and it hardcoded the docker runtime
+  instead of honouring `target.runtime`. Every node now goes through
+  `Apply`, projected to a single-node intent with its own name and hash so
+  idempotency stays per node.
+- **`Apply` did not persist `P2PPort`.** `network add` builds a joining
+  node's peer list from the `P2PPort` of every node in state and skips any
+  entry where it is zero, so a node deployed through `Apply` was invisible
+  as a peer: the late joiner came up with an empty peer list, never
+  connected, and neither command said why.
 - Witness private key inlined into rendered HOCON — typesafe-config does
   not perform `${ENV}` substitution, the literal `${SR_KEY}` was being
   read as a 9-char witness key and the SR shut down with WITNESS_INIT(1)

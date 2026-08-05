@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
@@ -128,74 +130,60 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	var deployed []map[string]any
 
-	for i, node := range parsed.Nodes {
-		nodeName := fmt.Sprintf("%s-node%d", parsed.Name, i)
-
-		rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, &node)
+	// Every node goes through internal/apply.Apply, the same core `trond
+	// apply` uses. This loop used to hand-roll render + Deploy + state,
+	// which quietly diverged from Apply in three ways: it never called
+	// internal/build (so a node with `build:` rendered an empty image:
+	// and deployed nothing usable, with no error), it hardcoded JDK 17
+	// for JVM arg selection instead of probing the target, and it
+	// hardcoded the docker runtime instead of honouring target.runtime.
+	for i := range parsed.Nodes {
+		sub, nodeName, intentHash, err := nodeIntent(parsed, i)
 		if err != nil {
-			return fmt.Errorf("render config for node %d: %w", i, err)
+			return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 		}
-		// Deploy path — needs the real witness key inlined.
-		hocon := rendered.Deployable()
-
-		memGB := render.ParseMemoryGB(node.Resources.Memory)
-		if memGB == 0 {
-			memGB = 16
-		}
-		jvmArgs := render.JVMArgsString(memGB, 17, node.JVM)
-		composeYAML := render.RenderCompose(nodeName, parsed, &node, "", jvmArgs, "")
-
-		opts := runtime.DeployOpts{
-			Name:        nodeName,
-			ConfigData:  []byte(hocon),
-			ComposeData: []byte(composeYAML),
-		}
-
-		rt := runtime.NewDockerRuntime(tgt, workDir)
-		if err := rt.Deploy(cmd.Context(), opts); err != nil {
+		res, err := apply.Apply(cmd.Context(), apply.Options{
+			Intent:         sub,
+			Target:         tgt,
+			Store:          store,
+			State:          deployState,
+			IntentHash:     intentHash,
+			Existing:       store.GetNode(deployState, nodeName),
+			TemplateDir:    templateDir,
+			DeploymentsDir: workDir,
+			IntentPath:     createIntentPath,
+			// Now that create is an Apply caller it inherits the core's
+			// state-based --require-private gate, same as cmd/apply.go.
+			// guard.Enforce above only sees the intent's network LABEL;
+			// this also checks the network recorded in state for a node
+			// already deployed under the same name (#203).
+			RequirePrivate: guard.Requested(),
+			// The network owns one monitoring stack covering every node
+			// (deployNetworkMonitoring below). Intent.Monitoring stays set
+			// so RenderHOCON still auto-enables the node's metrics port.
+			SkipMonitoring: true,
+		})
+		if err != nil {
 			deployed = append(deployed, map[string]any{
 				"name":   nodeName,
-				"type":   node.Type,
+				"type":   parsed.Nodes[i].Type,
 				"status": "error",
 				"error":  err.Error(),
 			})
 			continue
 		}
 
-		// Capture the (post-defaults, post-auto-allocation) ports in state
-		// so inspect / health / diagnose / events can target the right
-		// host endpoint without re-reading the intent file.
-		mn := state.ManagedNode{
-			Name:    nodeName,
-			Version: node.Version,
-			Network: parsed.Network,
-			Target: state.NodeTarget{
-				Type:         parsed.Target.Type,
-				Host:         parsed.Target.Host,
-				User:         parsed.Target.User,
-				Port:         parsed.Target.Port,
-				IdentityFile: parsed.Target.IdentityFile,
-			},
-			Runtime:     "docker",
-			Status:      "running",
-			LastApplied: time.Now().UTC(),
-			HTTPPort:    node.Ports.HTTP,
-			GRPCPort:    node.Ports.GRPC,
-			P2PPort:     node.Ports.P2P,
-			MetricsPort: node.Ports.Metrics,
-			Labels:      node.Labels,
+		entry := map[string]any{
+			"name":      nodeName,
+			"type":      parsed.Nodes[i].Type,
+			"status":    "running",
+			"outcome":   res.Outcome,
+			"endpoints": res.Endpoints,
 		}
-		store.UpsertNode(deployState, mn)
-
-		deployed = append(deployed, map[string]any{
-			"name":   nodeName,
-			"type":   node.Type,
-			"status": "running",
-			"endpoints": map[string]string{
-				"http": fmt.Sprintf("http://127.0.0.1:%d", node.Ports.HTTP),
-				"grpc": fmt.Sprintf("127.0.0.1:%d", node.Ports.GRPC),
-			},
-		})
+		if res.Build != nil {
+			entry["build"] = res.Build
+		}
+		deployed = append(deployed, entry)
 	}
 
 	result := map[string]any{
@@ -352,4 +340,36 @@ func deployNetworkMonitoring(ctx context.Context, tgt target.Target, workDir str
 type monitoringResult struct {
 	error string
 	urls  map[string]string
+}
+
+// nodeIntent projects the multi-node network intent down to the
+// single-node intent apply.Apply consumes, returning it alongside the
+// node's deployed name and its own intent hash.
+//
+// Apply keys everything off Intent.Name — the compose project, the state
+// entry, Result.Name — and reads only Intent.Nodes[0], so the projection
+// has to rename as well as slice. Everything else (target, network,
+// monitoring, template dir) is shared and copied through unchanged.
+//
+// The hash is computed over the projected intent rather than over the
+// network intent file, so idempotency is per node: editing one node's
+// ports must redeploy that node and leave its siblings at no_change.
+func nodeIntent(parsed *intent.Intent, i int) (sub *intent.Intent, name, hash string, err error) {
+	if i < 0 || i >= len(parsed.Nodes) {
+		return nil, "", "", fmt.Errorf("node index %d out of range (%d nodes)", i, len(parsed.Nodes))
+	}
+	name = fmt.Sprintf("%s-node%d", parsed.Name, i)
+
+	// Shallow struct copy is deliberate: the shared fields (Target,
+	// Monitoring, ...) are read-only from here on, and Apply must see the
+	// same values every node saw. Only Name and Nodes are re-pointed.
+	clone := *parsed
+	clone.Name = name
+	clone.Nodes = []intent.NodeSpec{parsed.Nodes[i]}
+
+	data, err := yaml.Marshal(&clone)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("hash node %d intent: %w", i, err)
+	}
+	return &clone, name, apply.IntentHashFromBytes(data), nil
 }
