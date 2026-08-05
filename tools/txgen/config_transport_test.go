@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,48 @@ func TestConfig_TransportRejections(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfig_ExpirationCeiling pins the boundary against java-tron's
+// MAXIMUM_TIME_UNTIL_EXPIRATION. Because txgen measures expiration from
+// raw_data.timestamp and the node checks against the head block's
+// timestamp, a value *at* the ceiling is rejected by the node for most of
+// every block interval — so it has to fail at config load, not silently
+// at broadcast.
+func TestConfig_ExpirationCeiling(t *testing.T) {
+	const gen = `"totalTxCount": 1, "privateKey": "%s", "txType": {"transfer": 100},`
+	key := strings.Repeat("a", PrivateKeyHexLen)
+
+	t.Run("default is java-tron's own", func(t *testing.T) {
+		cfg, err := writeConfig(t, `{"generate": {`+fmt.Sprintf(gen, key)+` "expirationMillis": 0}}`)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.Generate.ExpirationMillis != defaultExpirationMillis {
+			t.Errorf("expirationMillis = %d, want %d",
+				cfg.Generate.ExpirationMillis, defaultExpirationMillis)
+		}
+	})
+
+	t.Run("at the ceiling is rejected", func(t *testing.T) {
+		body := fmt.Sprintf(`{"generate": {%s "expirationMillis": %d}}`,
+			fmt.Sprintf(gen, key), maxExpirationMillis)
+		_, err := writeConfig(t, body)
+		if err == nil {
+			t.Fatal("want expirationMillis at the ceiling rejected, got nil")
+		}
+		if !strings.Contains(err.Error(), "MAXIMUM_TIME_UNTIL_EXPIRATION") {
+			t.Errorf("error = %v, want it to name the java-tron limit", err)
+		}
+	})
+
+	t.Run("just under the ceiling is allowed", func(t *testing.T) {
+		body := fmt.Sprintf(`{"generate": {%s "expirationMillis": %d}}`,
+			fmt.Sprintf(gen, key), maxExpirationMillis-1)
+		if _, err := writeConfig(t, body); err != nil {
+			t.Errorf("LoadConfig: %v", err)
+		}
+	})
 }
 
 // TestConfig_BroadcastValidatedForEverySubcommand pins that the transport

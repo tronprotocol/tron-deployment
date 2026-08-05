@@ -72,7 +72,7 @@ Save this as `txgen.json` next to the binary:
     "outputDir": "txgen-output",
     "txType": { "transfer": 100, "transferTrc10": 0, "transferTrc20": 0 },
     "transferAmount": 1,
-    "expirationMillis": 86400000
+    "expirationMillis": 60000
   },
 
   "broadcast": {
@@ -94,9 +94,11 @@ txgen generate -c txgen.json
 `generate` first builds `receiverAddressCount` fresh secp256k1 receivers (dumped to `txgen-output/receivers.csv` for auditability or `db fork` pre-funding), then builds `totalTxCount` signed TRX transfers fanning out across those receivers and splits them into `txgen-output/generate-tx-NNNN.csv`. Workers issue one HTTP round-trip per tx to the node (`/wallet/createtransaction`) for the unsigned form, then sign locally with secp256k1.
 
 By default txgen rewrites each unsigned transaction before signing so
-`raw_data.expiration = raw_data.timestamp + 86400000` (1 day). Override this
-with `generate.expirationMillis` when you need a shorter or longer broadcast
-window.
+`raw_data.expiration = raw_data.timestamp + 60000` (1 minute), matching
+java-tron's own default. Override with `generate.expirationMillis` when you
+need a longer broadcast window — but see
+[Transaction expiration](#transaction-expiration) for why it must stay well
+under 86400000.
 
 ### 3. Broadcast to the private chain
 
@@ -260,8 +262,10 @@ is set up differently — see below.
 
 Common helpers:
 - `Toolkit.jar db fork` with `<outputDir>/receivers.csv` to pre-fund receivers in one shot.
-- `generate.expirationMillis` defaults to 1 day, so generated CSVs can be
-  broadcast after the node's default 60 second transaction window.
+- `generate.expirationMillis` sets how long a generated CSV stays
+  broadcastable. It defaults to 60 s, matching java-tron; raise it for a
+  longer window, but keep it well under the 24 h ceiling — see
+  [Transaction expiration](#transaction-expiration).
 
 ---
 
@@ -338,6 +342,22 @@ All connections are opened and driven to `READY` before the first transaction, s
 
 The transport also checks that re-encoding `raw_data` reproduces `raw_data_hex` byte for byte before sending. It always should — but if the node runs a protocol fork carrying fields these bindings lack, the round trip reorders them, which would change the txID and void the signature. That fails loudly as `RAW_DATA_DRIFT` rather than broadcasting a mutated transaction.
 
+#### Transaction expiration
+
+A node accepts a transaction only while
+
+```
+headBlockTime < raw_data.expiration <= headBlockTime + 86_400_000
+```
+
+(`Manager.validateCommon`, `Constant.MAXIMUM_TIME_UNTIL_EXPIRATION`).
+
+txgen sets `expiration = raw_data.timestamp + expirationMillis`, but the node compares against the **head block's** timestamp, which trails `raw_data.timestamp` by up to one block interval. So at `expirationMillis = 86400000` the upper bound reduces to `raw_data.timestamp > headBlockTime`, which is true for most of every block interval — the transaction is expired the moment it is built, and only becomes acceptable once the chain produces a block past its creation time.
+
+That was the shipped default, and it produced a memorable symptom: `generate` immediately followed by `broadcast` failed almost entirely, while the *same CSV* broadcast a few seconds later succeeded. Measured on a private chain: 0/200 accepted back-to-back, 200/200 after waiting two blocks.
+
+The default is now `60000`, matching java-tron's own `TRANSACTION_DEFAULT_EXPIRATION_TIME`, and values at or above the ceiling are rejected when the config loads rather than by every broadcast.
+
 ### `statistic` — compute on-chain TPS for any range
 
 ```bash
@@ -382,7 +402,7 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
     "trc10Id": "1000001",
     "trc20Address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
     "transferAmount": 1,
-    "expirationMillis": 86400000,
+    "expirationMillis": 60000,
     "trc20FeeLimit": 100000000
   },
 
@@ -418,7 +438,7 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
 | `generate` | `trc10Id` | — | TRC10 token id (numeric string). Required iff `transferTrc10 > 0`. |
 | `generate` | `trc20Address` | — | TRC20 contract address (base58 or hex). Required iff `transferTrc20 > 0`. |
 | `generate` | `transferAmount` | `1` | Amount per tx in the smallest unit (SUN for TRX, raw token units otherwise). |
-| `generate` | `expirationMillis` | `86400000` | Transaction lifetime from `raw_data.timestamp`; txgen rewrites `raw_data.expiration`, `raw_data_hex`, and `txID` before signing. |
+| `generate` | `expirationMillis` | `60000` | Transaction lifetime from `raw_data.timestamp`; txgen rewrites `raw_data.expiration`, `raw_data_hex`, and `txID` before signing. Must be **under** 86400000 — see [Transaction expiration](#transaction-expiration). |
 | `generate` | `trc20FeeLimit` | `100000000` | Fee limit (SUN) on TRC20 calls. 100 TRX is plenty for a vanilla `transfer`. |
 | `generate` | `pq.enabled` | `false` | Mix in post-quantum signing (`pq_auth_sig`). See [Post-quantum transactions](#post-quantum-pq--抗量子-transactions). |
 | `generate` | `pq.scheme` | `ML_DSA_44` | PQ scheme: `ML_DSA_44` (default build) or `FN_DSA_512` (falcon build only, requires liboqs). |
@@ -449,7 +469,7 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
 | `generate: balance is not sufficient` (in node logs) | Sender ran out of TRX mid-run | Top up the sender, or shrink `totalTxCount`. |
 | `broadcast fail: SIGERROR: ...` | Signature didn't verify | Confirm the sender key matches the address that owns the source funds. Re-run `generate`. |
 | `broadcast fail: DUP_TRANSACTION_ERROR` | Same CSV was broadcast twice | Normal on a re-run. Move the old CSV out of `inputDir`. |
-| `broadcast fail: ... transaction expiration ...` | CSV is older than `generate.expirationMillis` | Re-run `generate`, or raise `generate.expirationMillis` before generating. |
+| `broadcast fail: TRANSACTION_EXPIRATION_ERROR` | CSV is older than `generate.expirationMillis` — **or** `expirationMillis` is near 86400000, see [Transaction expiration](#transaction-expiration) | Re-run `generate`. Do **not** raise `expirationMillis` toward the ceiling; that is what causes the second case. |
 | `statistic: fetch block X` | Block doesn't exist yet, or RPC is filtered | Tighten the range, or wait until the chain catches up. |
 | `grpc connection N to ... not ready` | gRPC port wrong, closed, or the node is still booting | Check `broadcast.grpc.endpoint`; java-tron's `node.rpc.port` is 50051 (50061 is the SolidityNode, which does not accept broadcasts). |
 | `broadcast fail: GRPC_DeadlineExceeded` | Calls queued behind the server's per-connection stream cap for longer than 5 s | Expected when `callsPerConnection` exceeds the node's `maxConcurrentCallsPerConnection`. Lower it, or raise `connections`. |

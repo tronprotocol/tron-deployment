@@ -141,7 +141,7 @@ func (c *Config) applyDefaults() {
 		c.Generate.TransferAmount = 1
 	}
 	if c.Generate.ExpirationMillis == 0 {
-		c.Generate.ExpirationMillis = 86_400_000 // 1 day
+		c.Generate.ExpirationMillis = defaultExpirationMillis
 	}
 	if c.Generate.TRC20FeeLimit == 0 {
 		c.Generate.TRC20FeeLimit = 100_000_000 // 100 TRX
@@ -203,6 +203,38 @@ func (c *Config) applyDefaults() {
 		c.Statistic.OutputFile = "tps-statistic.txt"
 	}
 }
+
+// Transaction expiration bounds, both taken from java-tron.
+//
+// A node rejects a transaction unless
+//
+//	headBlockTime < expiration <= headBlockTime + MAXIMUM_TIME_UNTIL_EXPIRATION
+//
+// (framework/src/main/java/org/tron/core/db/Manager.java, validateCommon;
+// Constant.MAXIMUM_TIME_UNTIL_EXPIRATION = 24h).
+//
+// txgen measures expiration from raw_data.timestamp — the node's clock
+// when it built the transaction — while the node checks against the head
+// block's timestamp, which trails it by up to one block interval. So an
+// expirationMillis *at* the ceiling produces
+//
+//	rawTimestamp + 24h > headBlockTime + 24h  <=>  rawTimestamp > headBlockTime
+//
+// which holds for most of every block interval: the transaction is
+// rejected as expired the moment it is created, and only starts being
+// accepted once the chain produces a block past its creation time. That
+// was the shipped default, and it made "generate then broadcast" fail
+// while "generate, wait, broadcast" worked.
+const (
+	// defaultExpirationMillis matches java-tron's own default for
+	// transactions it builds (Constant.TRANSACTION_DEFAULT_EXPIRATION_TIME).
+	defaultExpirationMillis = 60_000
+
+	// maxExpirationMillis is Constant.MAXIMUM_TIME_UNTIL_EXPIRATION. Values
+	// at or above it can never be accepted; values just below it are
+	// accepted only once the head block catches up to the creation time.
+	maxExpirationMillis = 24 * 60 * 60 * 1_000
+)
 
 // maxBroadcastLanes bounds connections x callsPerConnection. Each lane is
 // a goroutine blocked on an RPC, so the ceiling is about keeping a typo
@@ -306,6 +338,12 @@ func (c *Config) validate() error {
 	}
 	if c.Generate.ExpirationMillis < 0 {
 		return errors.New("generate.expirationMillis must be >= 0")
+	}
+	if c.Generate.ExpirationMillis >= maxExpirationMillis {
+		return fmt.Errorf("generate.expirationMillis must be < %d (java-tron's "+
+			"MAXIMUM_TIME_UNTIL_EXPIRATION); at or above it every transaction is "+
+			"rejected with TRANSACTION_EXPIRATION_ERROR, got %d",
+			maxExpirationMillis, c.Generate.ExpirationMillis)
 	}
 	return nil
 }
