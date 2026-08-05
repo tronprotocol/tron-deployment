@@ -12,6 +12,16 @@ The agent-ergonomics arc lands across four sequenced PRs:
 **#153** (`trond mcp`) → **#154** (`trond recipe`).
 
 ### Added
+- **`jvm.extra_opts`** — an escape hatch for JVM flags outside the closed
+  heap/GC field set, appended last so they win on any last-flag-wins
+  option. Needed because trond runs the JAR directly and so never reads
+  java-tron's `gradle/java-tron.vmoptions`, which its distribution launcher
+  (`bin/FullNode`) does: `-Dio.netty.allocator.type=pooled` is the live
+  example — java-tron sets it to opt out of netty 4.2's adaptive allocator,
+  and without the hatch a trond-deployed node silently runs on the
+  allocator upstream deliberately avoided. Restricted to `-D<key>=<value>`
+  and `-XX:…`; whitespace and quoting characters are refused, so one entry
+  is always exactly one argument.
 - `apply.Options.SkipMonitoring` suppresses the per-node monitoring stack
   while leaving `Intent.Monitoring` intact for rendering. `network create`
   needs both halves: `RenderHOCON` keys its metrics auto-enable off the

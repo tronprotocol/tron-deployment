@@ -74,6 +74,16 @@ func JVMArgs(totalMemoryGB int, jdkVersion int, jvm *intent.JVMConfig) []string 
 		"-XX:+UseTLAB",
 	)
 
+	// Operator escape hatch, appended LAST so it wins: the JVM takes the
+	// final occurrence for -XX:± and -D, so an extra_opt can override
+	// anything trond derived above. Entries are shape-checked at load
+	// time (intent.validateJVMExtraOpt) — restricted to -D<k>=<v> and
+	// -XX:…, no whitespace, no quoting characters — so appending them
+	// verbatim cannot add an argument or break the compose/systemd line.
+	if jvm != nil {
+		args = append(args, jvm.ExtraOpts...)
+	}
+
 	return args
 }
 

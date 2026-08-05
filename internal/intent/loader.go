@@ -121,6 +121,16 @@ func checkSafeStrings(idx int, n *NodeSpec) error {
 			return err
 		}
 	}
+	if n.JVM != nil {
+		for i, o := range n.JVM.ExtraOpts {
+			if err := chk(fmt.Sprintf("jvm.extra_opts[%d]", i), o); err != nil {
+				return err
+			}
+			if err := validateJVMExtraOpt(idx, i, o); err != nil {
+				return err
+			}
+		}
+	}
 	if err := chk("storage.data", n.Storage.Data); err != nil {
 		return err
 	}
@@ -477,4 +487,50 @@ func validateWitnessKeyEnv(value string) error {
 	}
 
 	return nil
+}
+
+// validateJVMExtraOpt enforces the shape of one jvm.extra_opts entry.
+//
+// These flags land in two places a stray character can break: the compose
+// `command:` list, as one Go-quoted YAML scalar, and the systemd ExecStart
+// line. On top of that render.JVMArgs joins the whole set with spaces, so an
+// entry containing whitespace does not stay one argument — it silently
+// becomes two, and `-Dfoo=bar -XX:+Evil` smuggled through a single list item
+// would look like one innocuous property in the intent.
+//
+// Only -D<key>=<value> and -XX:… are accepted. That is the tuning surface;
+// the flags that load code or rewrite the classpath (-javaagent, -agentlib,
+// -cp/-classpath, @argfile, -jar) are excluded by construction rather than by
+// blocklist, so a JVM flag added upstream tomorrow cannot slip in.
+func validateJVMExtraOpt(nodeIdx, optIdx int, a string) error {
+	where := fmt.Sprintf("nodes[%d].jvm.extra_opts[%d]", nodeIdx, optIdx)
+
+	if a == "" {
+		return fmt.Errorf("%s: empty JVM option", where)
+	}
+	for _, r := range a {
+		if r == ' ' || r == '\t' {
+			return fmt.Errorf("%s: %q contains whitespace; JVM options are joined "+
+				"with spaces, so one entry must be exactly one argument (list them separately)",
+				where, a)
+		}
+		if r == '"' || r == '\'' || r == '\\' || r == '$' || r == '`' {
+			return fmt.Errorf("%s: %q contains %q, which would not survive the "+
+				"compose command list / systemd ExecStart line intact", where, a, r)
+		}
+	}
+
+	switch {
+	case strings.HasPrefix(a, "-XX:") && len(a) > len("-XX:"):
+		return nil
+	case strings.HasPrefix(a, "-D") && len(a) > 2:
+		if eq := strings.IndexByte(a[2:], '='); eq <= 0 {
+			return fmt.Errorf("%s: malformed system property %q: expected -D<key>=<value>",
+				where, a)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s: disallowed JVM option %q: only -D<key>=<value> and -XX:… "+
+		"are permitted here (heap and GC have dedicated fields; flags that load code "+
+		"— -javaagent, -agentlib, -cp, @argfile — are not accepted)", where, a)
 }

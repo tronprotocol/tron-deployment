@@ -407,6 +407,25 @@ type JVMConfig struct {
 	DirectMemory string `yaml:"direct_memory,omitempty" json:"direct_memory,omitempty"`
 	GC           string `yaml:"gc,omitempty" json:"gc,omitempty" validate:"omitempty,oneof=G1 CMS auto"`
 	GCLog        *bool  `yaml:"gc_log,omitempty" json:"gc_log,omitempty"`
+
+	// ExtraOpts are additional JVM flags appended after everything trond
+	// derives, so they win on any last-flag-wins option.
+	//
+	// The closed field set above covers heap and GC, which is most tuning
+	// but not all of it. java-tron ships operational flags in
+	// gradle/java-tron.vmoptions, read by its distribution launcher
+	// (bin/FullNode); trond runs the JAR directly, so that file never
+	// applies. -Dio.netty.allocator.type=pooled is the live example —
+	// java-tron sets it to opt out of netty 4.2's adaptive allocator, and
+	// with no escape hatch a trond-deployed node silently runs with the
+	// allocator upstream deliberately avoided.
+	//
+	// Restricted to -D<key>=<value> and -XX:… — tuning, not code loading,
+	// so -javaagent / -agentlib / -cp / @argfile stay out by construction
+	// rather than by blocklist. Whitespace is rejected because JVMArgs
+	// joins the set with spaces: an entry containing one would silently
+	// become two arguments. Enforced in loader.go.
+	ExtraOpts []string `yaml:"extra_opts,omitempty" json:"extra_opts,omitempty"`
 }
 
 // PortMapping defines custom port overrides.

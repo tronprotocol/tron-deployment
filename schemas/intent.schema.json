@@ -561,6 +561,14 @@
           "type": "boolean",
           "default": false,
           "description": "Opt-in. Default off so the upstream image's start.sh decides."
+        },
+        "extra_opts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(-XX:.+|-D[^=\\s]+=[^\\s]*)$"
+          },
+          "description": "Extra JVM flags, appended last so they override anything trond derives. Restricted to -D<key>=<value> and -XX:... — one argument per entry, no whitespace or quoting characters. Needed because trond runs the JAR directly and never reads java-tron's gradle/java-tron.vmoptions (e.g. -Dio.netty.allocator.type=pooled)."
         }
       }
     },
