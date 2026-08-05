@@ -11,8 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/tronprotocol/tron-deployment/tools/common/broadcast"
 )
 
 // runBroadcast streams generate-tx*.csv files through the node's
@@ -32,6 +30,8 @@ func runBroadcast(ctx context.Context, cfg *Config) error {
 	}
 	log.Printf("broadcast: %d input files", len(files))
 
+	// Block lookups stay on HTTP regardless of the broadcast transport, so
+	// the report's on-chain TPS math is measured the same way either way.
 	node := NewNodeClient(cfg.Node, 10*time.Second)
 	startBlock, err := node.GetNowBlock(ctx)
 	if err != nil {
@@ -40,7 +40,16 @@ func runBroadcast(ctx context.Context, cfg *Config) error {
 	startBlockNum := startBlock.BlockHeader.RawData.Number
 	log.Printf("broadcast: start block = %d", startBlockNum)
 
-	cli := broadcast.New(cfg.Node)
+	tr, err := newTransport(cfg)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := tr.Close(); err != nil {
+			log.Printf("broadcast: close transport: %v", err)
+		}
+	}()
+	log.Printf("broadcast: transport = %s", tr.Describe())
 
 	var txIDFile *os.File
 	var txIDLock sync.Mutex
@@ -86,18 +95,20 @@ func runBroadcast(ctx context.Context, cfg *Config) error {
 		failCount atomic.Int64
 		wg        sync.WaitGroup
 	)
-	workers := cfg.Broadcast.Workers
+	// The transport owns the worker count: for grpc it *is* the
+	// per-connection in-flight limit, so it is not the caller's to pick.
+	workers := tr.Lanes()
 	log.Printf("broadcast: workers=%d tpsLimit=%d", workers, cfg.Broadcast.TpsLimit)
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
-		go func() {
+		go func(lane int) {
 			defer wg.Done()
 			for item := range work {
 				if ctx.Err() != nil {
 					return
 				}
 				<-tokens
-				ok, msg := cli.Broadcast(ctx, []byte(item[1]))
+				ok, msg := tr.Broadcast(ctx, lane, []byte(item[1]))
 				if ok {
 					okCount.Add(1)
 					if txIDFile != nil {
@@ -116,7 +127,7 @@ func runBroadcast(ctx context.Context, cfg *Config) error {
 					}
 				}
 			}
-		}()
+		}(w)
 	}
 
 	startTime := time.Now()

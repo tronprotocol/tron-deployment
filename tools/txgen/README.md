@@ -291,7 +291,52 @@ Output is sharded across multiple CSV files (task size auto-derived from `totalT
 txgen broadcast -c txgen.json
 ```
 
-Streams CSVs through `/wallet/broadcasttransaction`, throttled by a token bucket (100 ms refill). Worker count scales with `tpsLimit / 50`, clamped to `[4, 256]`. Failed broadcasts log the first 20 verbatim, then every 10,000th, so stderr stays readable without hiding structural issues (bad signature, dead node).
+Streams CSVs to the node, throttled by a token bucket (100 ms refill). Failed broadcasts log the first 20 verbatim, then every 10,000th, so stderr stays readable without hiding structural issues (bad signature, dead node).
+
+#### Transports
+
+`broadcast.transport` picks the wire protocol.
+
+| | `http` (default) | `grpc` |
+|---|---|---|
+| Endpoint | `POST /wallet/broadcasttransaction` on `node` (`:8090`) | `Wallet.BroadcastTransaction` on `grpc.endpoint` (`:50051`) |
+| Payload | the CSV row verbatim | `raw_data_hex` + `signature`, decoded to protobuf |
+| Concurrency | `workers` (default `tpsLimit / 50`, clamped to `[4, 256]`) | `grpc.connections` × `grpc.callsPerConnection` |
+| PQ transactions | supported | **not** supported — see below |
+
+**Concurrency is not the same axis on the two transports, which is why `grpc` is a separate mode rather than a flag.** Over HTTP, `workers` is effectively the number of connections: each worker blocks on its own request and `http.Client` opens sockets to match. Over gRPC, one `ClientConn` multiplexes *every* call onto a single HTTP/2 connection, and java-tron caps in-flight calls per connection (`node.rpc.maxConcurrentCallsPerConnection`). Past that cap the extra calls are not rejected — they queue inside the client transport. So raising a single `workers` number stops adding load at the cap while still *looking* like it applies more.
+
+txgen therefore asks for the two axes separately, and refuses `workers` under `grpc` rather than guessing which one you meant:
+
+```json
+"broadcast": {
+  "transport": "grpc",
+  "grpc": {
+    "connections": 4,
+    "callsPerConnection": 100
+  }
+}
+```
+
+One worker runs per call slot, so `connections × callsPerConnection` is both the worker count and the exact in-flight shape — connection *k* carries `callsPerConnection` calls and the mapping never moves during a run. To probe a server's per-connection cap, hold `connections: 1` and raise `callsPerConnection` past it, then compare against the same total spread over more connections. Calls that queue behind the cap are not rejected; if they queue longer than the 5 s call timeout they surface as `GRPC_DeadlineExceeded`.
+
+Measured against a private node with `maxConcurrentCallsPerConnection = 1`, 2000 transactions each:
+
+| shape | calls in flight | elapsed |
+|---|---|---|
+| `connections: 1, callsPerConnection: 1` | 1 | 2.06 s |
+| `connections: 1, callsPerConnection: 50` | 50 requested — capped to 1 | 2.02 s |
+| `connections: 50, callsPerConnection: 1` | 50, one per connection | 1.37 s |
+
+The first two rows are the point: asking for 50 in-flight calls on one connection performs exactly like asking for one, because the server's cap pins that connection and the other 49 workers queue in the client transport. Only spreading the same total across connections adds throughput. A single `workers`-style number cannot express that difference, and would report the middle row as "50 workers" while delivering the throughput of one.
+
+(The third row's transactions had a higher duplicate rate, so treat its margin as directional rather than a clean 1.5×. The first two rows had matching accept/reject profiles.)
+
+All connections are opened and driven to `READY` before the first transaction, so a wrong endpoint fails at startup instead of arriving as thousands of broadcast failures. Block lookups for the report stay on HTTP either way, so the on-chain TPS numbers are measured identically across transports.
+
+**PQ transactions cannot use the gRPC transport.** `Transaction.pq_auth_sig` exists only on the PQ fork; the pinned upstream protocol these bindings are generated from has no such field, so it would be dropped silently and every transaction would fail signature verification at the node — for a reason pointing nowhere near the transport. txgen refuses the row instead (`PQ_UNSUPPORTED`). Use `transport: "http"` for PQ runs.
+
+The transport also checks that re-encoding `raw_data` reproduces `raw_data_hex` byte for byte before sending. It always should — but if the node runs a protocol fork carrying fields these bindings lack, the round trip reorders them, which would change the txID and void the signature. That fails loudly as `RAW_DATA_DRIFT` rather than broadcasting a mutated transaction.
 
 ### `statistic` — compute on-chain TPS for any range
 
@@ -381,6 +426,11 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
 | `generate` | `pq.ratio` | `100` | Percent of txs PQ-signed (1–100); the rest are ECDSA-signed. Only used when `pq.enabled`. |
 | `broadcast` | `inputDir` | = `generate.outputDir` | Where to find `generate-tx-*.csv`. |
 | `broadcast` | `tpsLimit` | `1000` | Token-bucket cap, txs/second. |
+| `broadcast` | `transport` | `http` | Wire protocol: `http` or `grpc`. See [Transports](#transports). |
+| `broadcast` | `workers` | `tpsLimit / 50`, clamped to `[4, 256]` | Concurrent HTTP requests. **Rejected** under `transport: grpc` — use the two `grpc` axes instead. |
+| `broadcast` | `grpc.endpoint` | host of `node` + `:50051` | `host:port` of the FullNode gRPC service. Plaintext; no TLS. |
+| `broadcast` | `grpc.connections` | `1` | Independent HTTP/2 connections to open. |
+| `broadcast` | `grpc.callsPerConnection` | `100` | In-flight calls on each connection. Matches java-tron's own default cap, so an unconfigured run sits exactly at the server's ceiling. |
 | `broadcast` | `saveTxId` | `false` | Append accepted txIDs to `txIdFile`. |
 | `broadcast` | `txIdFile` | `broadcast-txid.csv` | One txID per line. |
 | `broadcast` | `reportFile` | `broadcast-report.txt` | Final report path. |
@@ -401,6 +451,11 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
 | `broadcast fail: DUP_TRANSACTION_ERROR` | Same CSV was broadcast twice | Normal on a re-run. Move the old CSV out of `inputDir`. |
 | `broadcast fail: ... transaction expiration ...` | CSV is older than `generate.expirationMillis` | Re-run `generate`, or raise `generate.expirationMillis` before generating. |
 | `statistic: fetch block X` | Block doesn't exist yet, or RPC is filtered | Tighten the range, or wait until the chain catches up. |
+| `grpc connection N to ... not ready` | gRPC port wrong, closed, or the node is still booting | Check `broadcast.grpc.endpoint`; java-tron's `node.rpc.port` is 50051 (50061 is the SolidityNode, which does not accept broadcasts). |
+| `broadcast fail: GRPC_DeadlineExceeded` | Calls queued behind the server's per-connection stream cap for longer than 5 s | Expected when `callsPerConnection` exceeds the node's `maxConcurrentCallsPerConnection`. Lower it, or raise `connections`. |
+| `broadcast fail: GRPC_Unavailable` | Node restarted or the connection dropped mid-run | Check the node; the transport fails fast rather than blocking on reconnect. |
+| `broadcast fail: PQ_UNSUPPORTED` | PQ-signed CSV sent over the gRPC transport | Set `broadcast.transport` to `http` — the pinned protocol has no `pq_auth_sig` field. |
+| `broadcast fail: RAW_DATA_DRIFT` | Node speaks a protocol fork carrying `raw_data` fields these bindings lack | Use `transport: "http"`, and re-pin `internal/tronproto/upstream` to the fork's protocol. |
 
 ---
 

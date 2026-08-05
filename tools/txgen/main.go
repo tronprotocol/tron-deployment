@@ -17,7 +17,8 @@
 //
 // Dependencies: stdlib + golang.org/x/crypto (Keccak-256) +
 // github.com/decred/dcrd/dcrec/secp256k1/v4 (signing) +
-// tools/common/broadcast (shared HTTP broadcast).
+// tools/common/broadcast (shared HTTP broadcast) + google.golang.org/grpc
+// and internal/tronproto/pb (the grpc broadcast transport).
 // Go version: 1.21+
 //
 // File layout:
@@ -29,6 +30,8 @@
 //   - csv.go         CSV read/write helpers
 //   - generate.go    `generate` subcommand (builds receivers + signs txs)
 //   - broadcast.go   `broadcast` subcommand
+//   - transport.go   broadcast transport interface + http implementation
+//   - grpc_node.go   grpc transport (Wallet.BroadcastTransaction)
 //   - statistic.go   `statistic` subcommand + TPS math + report formatters
 package main
 
