@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -148,6 +149,41 @@ func TestJarRuntime_Deploy_RestartsOnlyWhenSomethingChanged(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestJarRuntime_Deploy_EnvVarsAllSurvive covers a separate defect in the
+// same function: the drop-in was written once per key inside the loop,
+// each write truncating the last, so exactly one variable survived and
+// which one depended on Go's randomised map iteration order.
+func TestJarRuntime_Deploy_EnvVarsAllSurvive(t *testing.T) {
+	ft := newFakeTarget()
+	rt := NewJarRuntime(ft)
+	opts := DeployOpts{
+		Name:        "n1",
+		JarPath:     "/opt/tron/FullNode.jar",
+		ConfigData:  []byte("a = 1\n"),
+		SystemdData: []byte("[Service]\n"),
+		EnvVars: map[string]string{
+			"SR_PRIVATE_KEY": "deadbeef",
+			"TRON_HOME":      "/opt/tron",
+			"JAVA_OPTS":      "-Xmx16g",
+		},
+	}
+	if err := rt.Deploy(context.Background(), opts); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	got := string(ft.files["/etc/systemd/system/tron-n1.service.d/env.conf"])
+	for k, v := range opts.EnvVars {
+		want := "Environment=" + k + "=" + v
+		if !strings.Contains(got, want) {
+			t.Errorf("drop-in is missing %q — a node can start without its "+
+				"witness key depending on map iteration order.\ngot:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "[Service]"); n != 1 {
+		t.Errorf("drop-in has %d [Service] sections, want 1:\n%s", n, got)
 	}
 }
 

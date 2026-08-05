@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/tronprotocol/tron-deployment/internal/target"
@@ -60,17 +62,28 @@ func (r *JarRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 		return fmt.Errorf("daemon-reload: %w", err)
 	}
 
-	// Set environment variables for the service
-	for key, val := range opts.EnvVars {
+	// Set environment variables for the service.
+	//
+	// All of them go into one drop-in. The previous version wrote the file
+	// once per key inside the loop, each write replacing the last, so only
+	// one variable survived — and which one was whatever Go's randomised
+	// map iteration visited last. A witness node whose key arrives via
+	// EnvVars alongside anything else would start with the key missing on
+	// some deploys and present on others.
+	if len(opts.EnvVars) > 0 {
 		overridePath := fmt.Sprintf("/etc/systemd/system/%s.d", unitName)
 		if _, err := r.target.Exec(ctx, "mkdir", "-p", overridePath); err != nil {
 			return fmt.Errorf("create override dir: %w", err)
 		}
-		envOverride := fmt.Sprintf("[Service]\nEnvironment=%s=%s\n", key, val)
+		var sb strings.Builder
+		sb.WriteString("[Service]\n")
+		for _, key := range slices.Sorted(maps.Keys(opts.EnvVars)) {
+			fmt.Fprintf(&sb, "Environment=%s=%s\n", key, opts.EnvVars[key])
+		}
 		// Tracked for the same reason as the unit file: a changed
 		// Environment= only reaches the process across a restart.
 		envPath := filepath.Join(overridePath, "env.conf")
-		if err := tracker.write(ctx, envPath, []byte(envOverride), 0600); err != nil {
+		if err := tracker.write(ctx, envPath, []byte(sb.String()), 0600); err != nil {
 			return fmt.Errorf("write env override: %w", err)
 		}
 	}
