@@ -98,6 +98,20 @@ func runWait(cmd *cobra.Command, args []string) error {
 			"specify exactly one of --port, --http, --exec")
 	}
 
+	// --exec runs `sh -c <caller string>` on the node (probeExec below), so
+	// under the gate it is the same capability as `trond exec` and takes
+	// the same refusal. --port and --http stay allowed: those are read
+	// probes, and waiting for a mainnet node to come up is exactly the
+	// non-mutating call the gate is documented to permit (same reasoning
+	// as `auto-heal --dry-run`).
+	//
+	// Ahead of resolveNodeContext, per requirePrivateForNode's contract.
+	if waitExec != "" {
+		if err := requirePrivateForNode(nodeName); err != nil {
+			return err
+		}
+	}
+
 	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err

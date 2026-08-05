@@ -76,6 +76,13 @@ func TestMutators_RefuseMainnetUnderRequirePrivate(t *testing.T) {
 		"upgrade":   runUpgrade,
 		"remove":    runRemove,
 		"auto-heal": runAutoHeal,
+		// exec runs a caller-supplied program against the node — on a jar
+		// node directly on the target host. Its absence from this table is
+		// what let it ship ungated: every sibling was covered, so the table
+		// looked exhaustive. Note the args here are just {"n0"}: exec gates
+		// before its own "no command supplied" usage check precisely so the
+		// safety fact outranks the usage error.
+		"exec": runExec,
 	}
 	for name, run := range mutators {
 		t.Run(name, func(t *testing.T) {

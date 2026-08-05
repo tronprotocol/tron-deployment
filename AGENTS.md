@@ -695,7 +695,17 @@ An automated caller that should only ever touch a throwaway private chain
   var. When set, every mutating verb refuses a non-private node up front
   with `PRIVATE_NETWORK_REQUIRED` (exit 2): `apply`, `network create`, and
   the per-node mutators `start` / `stop` / `restart` / `remove` /
-  `rollback` / `upgrade` / `auto-heal`. The MCP `apply` tool takes the same
+  `rollback` / `upgrade` / `auto-heal`, plus the three that run caller-supplied
+  content against a node: `exec`, `wait --exec` (which is `sh -c <string>` on
+  the node) and `files put` (which writes caller bytes to a caller path,
+  on a jar node to the target host). Those three are gated regardless of
+  what the command or file happens to contain — the capability is the
+  thing being gated, not the payload. Their read counterparts stay
+  allowed: `wait --port` / `wait --http` / `files get` change nothing and
+  refusing them would only make the gate something people switch off.
+  A test derives this list from the source
+  (`cmd/require_private_coverage_test.go`), so a new command that resolves
+  a node must either take the guard or record why it needs none. The MCP `apply` tool takes the same
   gate via a `require_private` argument, and the MCP `auto_heal` tool honours
   the flag/env floor. Proposal-only calls stay allowed: `auto-heal --dry-run`
   / `auto_heal dry_run=true` never starts a node or writes state, so the

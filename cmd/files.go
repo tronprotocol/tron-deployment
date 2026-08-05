@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -58,6 +59,19 @@ func runFilesPut(cmd *cobra.Command, args []string) error {
 	nodeName, localSrc, remoteDst := args[0], args[1], args[2]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
+	// put writes caller-supplied bytes to a caller-supplied path on the
+	// node — on a jar node that is the target host, so it can land a
+	// systemd unit, a node config, or an authorized_keys. That is a
+	// mutation of the rig whatever the file happens to contain, so it
+	// takes the gate. `files get` is the read counterpart and stays
+	// allowed.
+	//
+	// Ahead of resolveNodeContext, per requirePrivateForNode's contract.
+	start := time.Now()
+	if err := requirePrivateForNode(nodeName); err != nil {
+		return err
+	}
+
 	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err
@@ -74,6 +88,8 @@ func runFilesPut(cmd *cobra.Command, args []string) error {
 	if nc.Node.Runtime == "jar" {
 		// Direct host write via Target.WriteFile.
 		if err := nc.Target.WriteFile(ctx, remoteDst, data, 0o644); err != nil {
+			writeAudit(auditEvent{Command: "files put", Node: nodeName, Target: nc.Target.String(),
+				Result: "error", ErrorCode: "FILES_ERROR", Start: start})
 			return output.NewError("FILES_ERROR", output.ExitGeneralError,
 				fmt.Sprintf("write to %s: %v", remoteDst, err))
 		}
@@ -98,11 +114,17 @@ func runFilesPut(cmd *cobra.Command, args []string) error {
 		stage.Close()
 
 		if _, err := nc.Target.Exec(ctx, "docker", "cp", stagePath, fmt.Sprintf("%s:%s", nodeName, remoteDst)); err != nil {
+			writeAudit(auditEvent{Command: "files put", Node: nodeName, Target: nc.Target.String(),
+				Result: "error", ErrorCode: "FILES_ERROR", Start: start})
 			return output.NewError("FILES_ERROR", output.ExitGeneralError,
 				fmt.Sprintf("docker cp into %s: %v", nodeName, err))
 		}
 	}
 
+	// Audited like the other verbs that change a node. Records that bytes
+	// were written and where, not their contents.
+	writeAudit(auditEvent{Command: "files put", Node: nodeName, Target: nc.Target.String(),
+		Result: "success", Start: start})
 	return writeFilesResult(outputFmt, "put", nodeName, localSrc, remoteDst, len(data))
 }
 

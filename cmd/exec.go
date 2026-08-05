@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -50,7 +51,30 @@ func runExec(cmd *cobra.Command, args []string) error {
 		nodeName = args[0]
 		rest = args[1:]
 	}
-	if nodeName == "" || len(rest) == 0 {
+	if nodeName == "" {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			"usage: trond exec <node> -- <cmd> [args...]")
+	}
+
+	// exec runs a caller-supplied program against the node: on a jar node
+	// that is rest[0] on the target host, on a docker node it is
+	// `docker exec <node> ...` inside the container. Either way it is at
+	// least as capable as the verbs that already gate — `trond exec
+	// <mainnet-node> -- rm -rf <datadir>` is a mutation by any reading —
+	// so it takes the same gate.
+	//
+	// Placed here, at the earliest point the node name is known and ahead
+	// of the remaining usage check, so that `--require-private` reports
+	// "not private" rather than a usage error: an agent should learn the
+	// safety fact first. Ahead of resolveNodeContext for the reason
+	// documented on requirePrivateForNode — otherwise an unreachable
+	// mainnet node masks the gate with TARGET_UNREACHABLE.
+	start := time.Now()
+	if err := requirePrivateForNode(nodeName); err != nil {
+		return err
+	}
+
+	if len(rest) == 0 {
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
 			"usage: trond exec <node> -- <cmd> [args...]")
 	}
@@ -82,8 +106,16 @@ func runExec(cmd *cobra.Command, args []string) error {
 	// Always emit captured output even on error — the caller usually wants it.
 	os.Stdout.Write(out)
 	if execErr != nil {
+		writeAudit(auditEvent{Command: "exec", Node: nodeName, Target: nc.Target.String(),
+			Result: "error", ErrorCode: "EXEC_ERROR", Start: start})
 		return output.NewError("EXEC_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("exec on %s failed: %v", nodeName, execErr))
 	}
+	// Audited like every other verb that touches a node. The entry records
+	// that an exec happened, not what ran: AuditEntry has no field for it,
+	// and the argv is the one place a caller is most likely to have put a
+	// token or key. Recording the program name would need a schema change.
+	writeAudit(auditEvent{Command: "exec", Node: nodeName, Target: nc.Target.String(),
+		Result: "success", Start: start})
 	return nil
 }
