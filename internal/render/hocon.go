@@ -1,6 +1,8 @@
 package render
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -359,18 +361,45 @@ func hoconStringList(items []string) string {
 // hoconValue renders an arbitrary intent value (from config_overrides) as
 // the closest HOCON literal. Strings are double-quoted; numbers and bools
 // pass through; lists / maps are JSON-serialised, which HOCON accepts.
+// hoconValue renders one config_overrides value as a HOCON literal.
+//
+// HOCON is a superset of JSON, so a JSON encoder is the correct renderer for
+// everything except numbers. fmt is not: it produces Go syntax, and Go syntax
+// is only accidentally JSON. Two real defects this replaces:
+//
+//   - %v on a slice or map emitted Go's own container syntax —
+//     `[map[address:T… voteCount:5000]]` — which no HOCON parser accepts. That
+//     made every list-valued override unusable, including
+//     `genesis.block.witnesses`, i.e. multi-witness private networks could not
+//     be expressed in an intent at all.
+//   - %q on a string holding a control byte emitted `\x01`. That is a Go
+//     escape, not a JSON/HOCON one, so the rendered config failed to parse.
+//
+// Numbers stay on fmt deliberately: %v already yields JSON-compatible output
+// for every numeric type YAML can produce (including the 1e+06 form, which the
+// JSON number grammar allows), and routing them through the encoder would
+// change existing rendered configs for no correctness gain.
+//
+// HTML escaping is disabled so URLs, & and friends survive verbatim rather
+// than turning into &.
 func hoconValue(v any) string {
 	switch x := v.(type) {
-	case string:
-		return fmt.Sprintf("%q", x)
 	case bool:
 		return fmt.Sprintf("%t", x)
-	case int, int32, int64, float32, float64:
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
 		return fmt.Sprintf("%v", x)
 	default:
-		// Fall back to %v which works for slices/maps (HOCON accepts
-		// JSON-style for those).
-		return fmt.Sprintf("%v", x)
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(x); err != nil {
+			// Unreachable for anything YAML can unmarshal into `any`;
+			// kept so an exotic value degrades instead of panicking.
+			return fmt.Sprintf("%q", fmt.Sprintf("%v", x))
+		}
+		return strings.TrimRight(buf.String(), "\n")
 	}
 }
 

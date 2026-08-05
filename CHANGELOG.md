@@ -192,6 +192,17 @@ The agent-ergonomics arc lands across four sequenced PRs:
   (was a documented TODO before); refuses `/` and empty paths
 
 ### Fixed
+- **`config_overrides` rendered Go syntax, not HOCON.** `hoconValue` fell
+  back to `fmt.%v` for slices and maps, emitting `[map[address:T… voteCount:5000]]`
+  — which no HOCON parser accepts — so every list-valued override was
+  unusable and a multi-witness `genesis.block.witnesses` (the two-SR private
+  net tron-docker documents) could not be expressed in an intent at all. The
+  same function used `fmt.%q` for strings, which emits Go's `\x01` for a
+  control byte rather than JSON's `\u0001`. Both now render through a JSON
+  encoder (HOCON is a JSON superset) with HTML escaping off so URLs survive
+  verbatim. Numbers deliberately stay on `fmt` — `%v` is already
+  JSON-compatible there and routing them through the encoder would change
+  every rendered config for no correctness gain.
 - Witness private key inlined into rendered HOCON — typesafe-config does
   not perform `${ENV}` substitution, the literal `${SR_KEY}` was being
   read as a 9-char witness key and the SR shut down with WITNESS_INIT(1)
