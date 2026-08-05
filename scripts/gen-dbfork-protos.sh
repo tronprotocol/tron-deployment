@@ -12,13 +12,14 @@
 set -euo pipefail
 
 # --- Toolchain prechecks (fail-loud) --------------------------------
-for bin in protoc protoc-gen-go; do
+for bin in protoc protoc-gen-go protoc-gen-go-grpc; do
     if ! command -v "$bin" >/dev/null 2>&1; then
         echo "error: '$bin' not found on PATH." >&2
-        if [ "$bin" = "protoc-gen-go" ]; then
+        case "$bin" in protoc-gen-go|protoc-gen-go-grpc)
             echo "       Install the pinned version: go install tool" >&2
             echo "       (Reads the version from go.mod's tool directive.)" >&2
-        fi
+            ;;
+        esac
         echo "       See internal/dbfork/proto/README.md for full instructions." >&2
         exit 1
     fi
@@ -26,6 +27,10 @@ done
 
 cd "$(dirname "$0")/.."   # repo root
 UPSTREAM="internal/dbfork/proto/upstream"
+# googleapis annotations, imported by api/api.proto. Kept OUTSIDE upstream/
+# because upstream/ is a git subtree of java-tron's protos — adding files
+# there would conflict on the next `git subtree pull`.
+THIRDPARTY="internal/dbfork/proto/thirdparty"
 OUT="internal/dbfork/proto/pb"
 
 # --- WARNING: $OUT is wiped + regenerated on every run --------------
@@ -39,6 +44,13 @@ OUT="internal/dbfork/proto/pb"
 # this list) get their go_package overridden too — see ALL_PROTOS
 # below — but no .pb.go is emitted for them.
 PROTO_FILES=(
+    # api/api.proto carries the Wallet gRPC SERVICE definition. It is the
+    # only entry here generated for its service stubs rather than its
+    # messages: tools/txgen's gRPC transport needs a real WalletClient, and
+    # hand-writing a trimmed copy of the service would silently drift from
+    # upstream the first time a signature changed. Pulling it in also
+    # generates its message set and the contract protos it imports.
+    "api/api.proto"
     "core/Tron.proto"
     "core/Discover.proto"                       # Endpoint, used by Tron.proto
     "core/contract/account_contract.proto"
@@ -46,6 +58,16 @@ PROTO_FILES=(
     "core/contract/smart_contract.proto"
     "core/contract/common.proto"
     "core/contract/balance_contract.proto"
+    # Pulled in by api/api.proto's service methods — the Wallet service
+    # signature references every contract type, so generating the service
+    # requires the full import closure, not just dbfork's subset.
+    "core/contract/witness_contract.proto"
+    "core/contract/proposal_contract.proto"
+    "core/contract/storage_contract.proto"
+    "core/contract/exchange_contract.proto"
+    "core/contract/market_contract.proto"
+    "core/contract/shield_contract.proto"
+    "core/contract/vote_asset_contract.proto"
     "core/tron/account.proto"
     "core/tron/transaction.proto"
 )
@@ -77,6 +99,7 @@ if [ ${#ALL_PROTOS[@]} -eq 0 ]; then
     exit 1
 fi
 GO_OPTS=()
+GRPC_OPTS=()
 for f in "${ALL_PROTOS[@]}"; do
     # M flag format: <proto-path>=<go-import>;<go-pkg-name>
     # All files share both the import path AND the package name "tronpb"
@@ -84,6 +107,9 @@ for f in "${ALL_PROTOS[@]}"; do
     # (Without ;tronpb, protoc-gen-go infers the package name from the
     # .proto's `package protocol.contract;` etc. and they diverge.)
     GO_OPTS+=("--go_opt=M${f}=${GO_PACKAGE_PREFIX};tronpb")
+    # protoc-gen-go-grpc needs the identical mapping — it resolves the Go
+    # import path of every message a service method references.
+    GRPC_OPTS+=("--go-grpc_opt=M${f}=${GO_PACKAGE_PREFIX};tronpb")
 done
 
 # Ensure the output dir exists (otherwise protoc errors). Empty it
@@ -102,9 +128,14 @@ mkdir -p "$OUT"
 # etc. all in one dir → one Go package → no import cycles.
 protoc \
     -I="$UPSTREAM" \
+    -I="$THIRDPARTY" \
     "${GO_OPTS[@]}" \
+    "${GRPC_OPTS[@]}" \
     --go_out="$OUT" \
     --go_opt=module="$GO_PACKAGE_PREFIX" \
+    --go-grpc_out="$OUT" \
+    --go-grpc_opt=module="$GO_PACKAGE_PREFIX" \
+    --go-grpc_opt=require_unimplemented_servers=false \
     "${PROTO_FILES[@]/#/$UPSTREAM/}"
 
 echo "Generated:"

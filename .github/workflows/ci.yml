@@ -96,11 +96,14 @@ jobs:
     #      tempt operators to "just tweak" — they're machine-
     #      generated and will be clobbered by the next regen).
     #
-    # protoc-gen-go version is pinned via go.mod's `tool` directive
+    # Generator versions are pinned via go.mod's `tool` directive
     # (Go 1.24+ pattern). `go install tool` here installs ALL tools
-    # declared in go.mod — currently just protoc-gen-go @ the
-    # matching google.golang.org/protobuf runtime version. Single
-    # source of truth; mismatched generator vs runtime can't happen.
+    # declared in go.mod — protoc-gen-go @ the matching
+    # google.golang.org/protobuf runtime version, and protoc-gen-go-grpc
+    # for the Wallet service stubs. Single source of truth; mismatched
+    # generator vs runtime can't happen. Both versions appear in the
+    # generated headers, which this job diffs, so a drifted plugin is
+    # caught here rather than at some later build.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

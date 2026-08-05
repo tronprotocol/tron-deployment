@@ -105,11 +105,18 @@ Everything else stays in `upstream/` for future extension — add to
 
 ## Why not just use `tronprotocol/grpc-gateway` Go bindings?
 
-`grpc-gateway` ships Go bindings for the same proto repo, but it's
-oriented at gRPC clients (it has the service stubs we don't need)
-and pulls in dozens of transitive imports we don't want in trond's
-binary. Generating only what we use keeps trond's static binary
-small and our dependency surface narrow.
+`tronprotocol/grpc-gateway` is a fork of the grpc-gateway *plugin*,
+not a published set of TRON Go bindings — there is no `WalletClient`
+in it, so it was never an option for the service stubs. Generating
+from the vendored protos keeps trond's static binary small and our
+dependency surface narrow.
+
+Note the service stubs ARE generated now: `tools/txgen`'s gRPC
+transport needs a real `WalletClient`, and hand-writing a trimmed
+copy of the `Wallet` service would silently drift from upstream the
+first time a signature changed. That is why `api/api.proto` and the
+full set of contract protos its method signatures reference are in
+`PROTO_FILES`, even though dbfork itself touches none of them.
 
 ## Tooling install
 
