@@ -705,7 +705,11 @@ An automated caller that should only ever touch a throwaway private chain
   refusing them would only make the gate something people switch off.
   A test derives this list from the source
   (`cmd/require_private_coverage_test.go`), so a new command that resolves
-  a node must either take the guard or record why it needs none. The MCP `apply` tool takes the same
+  a node must either take the guard or record why it needs none.
+  `recipe run` forwards the gate (and `--state-dir`) into every step it
+  re-execs, so a gated recipe run is gated all the way down — previously
+  only the `TROND_REQUIRE_PRIVATE` form crossed that boundary, because a
+  child process inherits the environment but not a flag. The MCP `apply` tool takes the same
   gate via a `require_private` argument, and the MCP `auto_heal` tool honours
   the flag/env floor. Proposal-only calls stay allowed: `auto-heal --dry-run`
   / `auto_heal dry_run=true` never starts a node or writes state, so the

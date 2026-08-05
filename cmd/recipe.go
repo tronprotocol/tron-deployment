@@ -7,7 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/recipe"
 )
 
@@ -165,13 +167,28 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		exe = os.Args[0]
 	}
 
+	// Dry-run prints its plan to Out. In json mode that is the same stream
+	// the RunResult goes to, so the plan lines land in front of the JSON
+	// and nothing downstream can parse it. Send progress to stderr there
+	// and leave text mode's stdout behaviour alone.
+	planOut := cmd.OutOrStdout()
+	if outputFmt == "json" {
+		planOut = cmd.ErrOrStderr()
+	}
+
 	res, runErr := recipe.Run(cmd.Context(), r, recipe.RunOptions{
 		Binary:     exe,
 		Params:     params,
 		DryRun:     recipeRunDryRun,
 		ResumeFrom: recipeRunResumeFrom,
-		Out:        cmd.OutOrStdout(),
+		Out:        planOut,
 		Err:        cmd.ErrOrStderr(),
+		// Steps are re-execs of this binary and inherit none of our flags.
+		// Forward the two that decide WHERE a step acts and WHETHER it is
+		// allowed to. paths.BaseDir() is the parent's already-resolved
+		// directory, so this covers --state-dir and TROND_STATE_DIR alike.
+		StateDir:       paths.BaseDir(),
+		RequirePrivate: guard.Requested(),
 	})
 
 	if outputFmt == "json" && res != nil {
@@ -181,9 +198,19 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 			res.Recipe, res.Status, len(res.Steps), res.DurationMs)
 	}
 	if runErr != nil {
-		// Already-structured error envelope for the runErr path; if
-		// not structured, wrap it once.
-		return output.NewError("RECIPE_FAILED", output.ExitGeneralError, runErr.Error())
+		// Carry the failing step's exit code rather than flattening every
+		// failure to 1. A step refused by the private gate exits 2, and an
+		// agent that sees 1 learns "something broke" where the truth was
+		// "refused, and here is why".
+		exit := output.ExitGeneralError
+		if res != nil && res.FailedAt != "" {
+			for _, st := range res.Steps {
+				if st.ID == res.FailedAt && st.ExitCode > 0 {
+					exit = st.ExitCode
+				}
+			}
+		}
+		return output.NewError("RECIPE_FAILED", exit, runErr.Error())
 	}
 	return nil
 }

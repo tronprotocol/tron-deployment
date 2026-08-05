@@ -39,6 +39,22 @@ type RunOptions struct {
 	// final RunResult.
 	Out io.Writer
 	Err io.Writer
+
+	// StateDir is the parent's resolved state directory, forwarded to
+	// every step. Without it a run started with --state-dir reads its
+	// recipe from one state and executes every step against ~/.trond —
+	// two different states, with nothing in the output to say so.
+	StateDir string
+
+	// RequirePrivate mirrors guard.Requested() in the parent.
+	//
+	// The gate is `flag OR inherited env` (internal/guard). The env form
+	// crosses into a re-exec'd step for free; the flag form is a
+	// process-local package var and does not. So without this,
+	// `trond --require-private recipe run X` runs every step ungated,
+	// while the identical run started with TROND_REQUIRE_PRIVATE=1 is
+	// gated — the safety floor would depend on which way you asked for it.
+	RequirePrivate bool
 }
 
 // Run executes a recipe. Returns a RunResult plus error; the error is
@@ -105,6 +121,15 @@ func Run(ctx context.Context, r Recipe, opts RunOptions) (*RunResult, error) {
 		stepResult, err := runStep(ctx, opts, step, args)
 		result.Steps = append(result.Steps, stepResult)
 
+		// Persist BEFORE the failure switch. Rollback steps exist to clean
+		// up after a failed step and routinely need that step's output —
+		// the shipped fresh-mainnet recipe's rollback references
+		// {{ steps.apply.name }}, and its own comment says rollback runs
+		// only when apply fails. Persisting after the switch meant the one
+		// case the reference was written for was the one case where the
+		// key did not exist. `on_failure: continue` lost it the same way.
+		persistStep(stepsState, step, stepResult)
+
 		if err != nil {
 			switch step.OnFailure {
 			case "continue":
@@ -127,22 +152,44 @@ func Run(ctx context.Context, r Recipe, opts RunOptions) (*RunResult, error) {
 			}
 		}
 
-		// Persist the named output fields for downstream substitution.
-		if len(step.Persist) > 0 && stepResult.Output != nil {
-			persisted := map[string]any{}
-			for _, k := range step.Persist {
-				if v, ok := stepResult.Output[k]; ok {
-					persisted[k] = v
-				}
-			}
-			stepsState[step.ID] = persisted
-		} else {
-			stepsState[step.ID] = stepResult.Output
-		}
+	}
+
+	// A --resume-from that matched nothing skipped every step and returned
+	// "success" with no work done. A typo'd step ID is the likely cause,
+	// and reporting it as a clean run is the worst possible answer.
+	if skipping {
+		result.Status = "failed"
+		result.DurationMs = time.Since(start).Milliseconds()
+		return result, fmt.Errorf("--resume-from %q matched no step in recipe %q (steps: %s)",
+			opts.ResumeFrom, r.Name, stepIDs(r.Steps))
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
+}
+
+// persistStep records the step's output for {{ steps.<id>.<field> }}
+// substitution, honouring an explicit persist list when present.
+func persistStep(state map[string]map[string]any, step Step, res StepResult) {
+	if len(step.Persist) > 0 && res.Output != nil {
+		persisted := map[string]any{}
+		for _, k := range step.Persist {
+			if v, ok := res.Output[k]; ok {
+				persisted[k] = v
+			}
+		}
+		state[step.ID] = persisted
+		return
+	}
+	state[step.ID] = res.Output
+}
+
+func stepIDs(steps []Step) string {
+	ids := make([]string, 0, len(steps))
+	for _, s := range steps {
+		ids = append(ids, s.ID)
+	}
+	return strings.Join(ids, ", ")
 }
 
 // runStep handles a single step's exec + output capture.
@@ -153,8 +200,22 @@ func runStep(ctx context.Context, opts RunOptions, step Step, args []string) (St
 		return res, errors.New(res.Error)
 	}
 
-	full := append(strings.Fields(step.Command), args...)
+	// Global flags go immediately after the subcommand path, never at the
+	// end. A step's own args may contain "--" (every `exec` step does),
+	// and anything after it belongs to the inner command: appending
+	// "--output json" there passed those two tokens to the program being
+	// exec'd AND left trond itself in text mode. Cobra accepts persistent
+	// flags anywhere before the "--", so this position is both correct
+	// and the only one that stays correct for every step.
+	full := strings.Fields(step.Command)
 	full = append(full, "--output", "json")
+	if opts.StateDir != "" {
+		full = append(full, "--state-dir", opts.StateDir)
+	}
+	if opts.RequirePrivate {
+		full = append(full, "--require-private")
+	}
+	full = append(full, args...)
 
 	if opts.DryRun {
 		fmt.Fprintf(opts.Out, "  [%s] would run: %s %s\n", step.ID, opts.Binary, strings.Join(full, " "))
