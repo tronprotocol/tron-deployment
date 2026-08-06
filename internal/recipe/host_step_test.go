@@ -226,3 +226,78 @@ func TestValidate_CommandStepsUnchanged(t *testing.T) {
 		t.Fatalf("a recipe with no kind: field must still parse: %v", err)
 	}
 }
+
+// TestValidate_ScriptRejectsTemplateSyntax covers a defect shipped in the
+// kind: host change: script is not substituted, so `{{ params.x }}` inside
+// it reached the shell as literal text. The step ran, nothing errored, and
+// it operated on the template string — a recipe whose await-loop curled a
+// literal "{{ params.node_url }}" span until the caller gave up.
+//
+// Substituting into a shell body is not the fix: a param of "; rm -rf /"
+// would execute. env: is substituted and the shell sees it as data, so the
+// trap becomes a load-time error pointing there.
+func TestValidate_ScriptRejectsTemplateSyntax(t *testing.T) {
+	body := "name: t\nsteps:\n  - id: a\n    kind: host\n" +
+		"    script: curl -sf {{ params.node_url }}/health\n"
+	_, err := Parse([]byte(body))
+	if err == nil {
+		t.Fatal("want {{ }} in a script rejected, got nil — it would have run as literal text")
+	}
+	for _, want := range []string{"script is not substituted", "env:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v should contain %q so the author knows what to do instead", err, want)
+		}
+	}
+}
+
+// TestHostStep_EnvIsTheSubstitutionChannel is the other half: the escape
+// hatch the error points at has to actually work.
+func TestHostStep_EnvIsTheSubstitutionChannel(t *testing.T) {
+	dir := t.TempDir()
+	r := Recipe{
+		Name:   "t",
+		Params: []Param{{Name: "target", Required: true}},
+		Steps: []Step{{
+			ID: "h1", Kind: KindHost,
+			Env:    map[string]string{"TARGET": "{{ params.target }}"},
+			Script: `printf '%s' "$TARGET" > ` + filepath.Join(dir, "out"),
+		}},
+	}
+	if _, err := Run(context.Background(), r, RunOptions{
+		Out: io.Discard, Err: io.Discard, AllowHostExec: true,
+		Params: map[string]string{"target": "http://example:8090"},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "out"))
+	if string(got) != "http://example:8090" {
+		t.Errorf("script saw %q; env: must carry substituted values into the shell", got)
+	}
+}
+
+// TestHostStep_DirIsSubstituted: dir: was shipped unsubstituted alongside
+// script:, but the right answer differs. cmd.Dir is a path handed to
+// chdir — a hostile value can only fail to open — so it substitutes,
+// where a script body is code and does not.
+func TestHostStep_DirIsSubstituted(t *testing.T) {
+	dir := t.TempDir()
+	r := Recipe{
+		Name:   "t",
+		Params: []Param{{Name: "workdir", Required: true}},
+		Steps: []Step{{
+			ID: "h1", Kind: KindHost,
+			Dir: "{{ params.workdir }}",
+			Run: []string{"touch", "made-here"},
+		}},
+	}
+	if _, err := Run(context.Background(), r, RunOptions{
+		Out: io.Discard, Err: io.Discard, AllowHostExec: true,
+		Params: map[string]string{"workdir": dir},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "made-here")); err != nil {
+		t.Errorf("dir: was not substituted — the step would chdir to a literal "+
+			"{{ }} path: %v", err)
+	}
+}

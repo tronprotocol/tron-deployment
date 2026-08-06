@@ -147,6 +147,12 @@ func validateSteps(section string, steps []Step) []string {
 			case len(s.Run) > 0 && strings.TrimSpace(s.Run[0]) == "":
 				problems = append(problems, where+": run[0] (the program) is empty")
 			}
+			if strings.Contains(s.Script, "{{") {
+				problems = append(problems, where+
+					": script is not substituted, and {{ }} in it would run as literal text. "+
+					"Pass values through env: (which is substituted) and read them as shell "+
+					`variables: env: {NODE_URL: "{{ params.node_url }}"} then "$NODE_URL"`)
+			}
 			if s.Command != "" {
 				problems = append(problems, where+
 					": command belongs to `kind: command` steps; a host step uses run or script")

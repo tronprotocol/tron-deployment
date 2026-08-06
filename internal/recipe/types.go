@@ -89,6 +89,19 @@ type Step struct {
 	// with Run. Use it when you need pipes, globs or conditionals;
 	// prefer Run when you do not, because argv has no quoting rules to
 	// get wrong.
+	//
+	// Script is NOT substituted, and {{ }} inside it is rejected at load
+	// time rather than passed through. Interpolating a value into a shell
+	// body is command injection by construction — a param of
+	// "; rm -rf /" would execute — and passing the template text through
+	// silently is worse still: the script runs, nothing errors, and it
+	// operates on the literal string "{{ params.x }}".
+	//
+	// Reach values through env: instead, which IS substituted and which
+	// the shell sees as data rather than code:
+	//
+	//	env:    {NODE_URL: "{{ params.node_url }}"}
+	//	script: curl -sf "$NODE_URL/wallet/getnowblock"
 	Script string `yaml:"script,omitempty" json:"script,omitempty"`
 
 	// Dir is the working directory for a host step. Relative paths are

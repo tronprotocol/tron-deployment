@@ -183,6 +183,19 @@ func Run(ctx context.Context, r Recipe, opts RunOptions) (*RunResult, error) {
 		}
 
 		st := step
+		// dir: is substituted; script: is not. The difference is where the
+		// value lands: cmd.Dir is a path handed to chdir, where a hostile
+		// value can only fail to open, while a script body is code. Both
+		// were unsubstituted at first, and the failures looked nothing
+		// alike — the script silently ran on literal "{{ ... }}" text,
+		// the dir failed loudly at chdir.
+		if step.Dir != "" {
+			sd, err := substitute(step.Dir, resolved, stepsState)
+			if err != nil {
+				return result, fmt.Errorf("step %s: dir: %w", step.ID, err)
+			}
+			st.Dir = sd
+		}
 		if len(step.Env) > 0 {
 			st.Env = make(map[string]string, len(step.Env))
 			for k, v := range step.Env {
