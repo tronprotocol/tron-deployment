@@ -54,6 +54,10 @@
     "detail": {
       "type": "string",
       "description": "What the command acted on, for verbs where the verb alone does not say (exec's program, files put's destination, a recipe's source). An identifier, never a payload."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Correlation id shared by every entry from one recipe run, including the steps it re-execs."
     }
   }
 }

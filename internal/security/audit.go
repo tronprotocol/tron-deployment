@@ -31,6 +31,14 @@ type AuditEntry struct {
 	// exactly where a caller is most likely to have put a token or key,
 	// and an audit log is the wrong place to learn that.
 	Detail string `json:"detail,omitempty"`
+
+	// RunID ties entries produced by one recipe run together. A recipe's
+	// command steps re-exec trond, so each child writes its own entry
+	// under its own verb — correct, but it leaves the log showing
+	// "stop n0" with no indication that a recipe drove it, and no way to
+	// tell two concurrent runs apart. The parent mints an id and the
+	// children inherit it through the environment.
+	RunID string `json:"run_id,omitempty"`
 }
 
 // AuditLog writes append-only JSONL entries to the audit log file.

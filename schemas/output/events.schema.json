@@ -4,19 +4,60 @@
   "title": "trond events output",
   "description": "JSONL stream emitted by `trond events --output json`. Each line is one audit-log entry.",
   "type": "object",
-  "required": ["timestamp", "command", "result"],
+  "required": [
+    "timestamp",
+    "command",
+    "result"
+  ],
   "properties": {
-    "timestamp": { "type": "string", "format": "date-time" },
-    "command":   {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "command": {
       "type": "string",
       "description": "The trond subcommand that was invoked.",
-      "examples": ["apply", "stop", "snapshot.download", "network.create"]
+      "examples": [
+        "apply",
+        "stop",
+        "snapshot.download",
+        "network.create"
+      ]
     },
-    "node":         { "type": "string", "description": "Affected managed node, when applicable." },
-    "target":       { "type": "string", "description": "Target type that processed the command (local | ssh)." },
-    "intent_hash":  { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "result":       { "type": "string", "enum": ["success", "failure", "no_change"] },
-    "duration_ms":  { "type": "integer", "minimum": 0 },
-    "error_code":   { "type": "string" }
+    "node": {
+      "type": "string",
+      "description": "Affected managed node, when applicable."
+    },
+    "target": {
+      "type": "string",
+      "description": "Target type that processed the command (local | ssh)."
+    },
+    "intent_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failure",
+        "no_change"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error_code": {
+      "type": "string"
+    },
+    "detail": {
+      "type": "string",
+      "description": "What the command acted on, for verbs where the verb alone does not say (exec's program, files put's destination, a recipe's source). An identifier, never a payload."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Correlation id shared by every entry from one recipe run, including the steps it re-execs."
+    }
   }
 }

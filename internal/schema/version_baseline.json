@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.14.0",
+  "schema_version": "1.15.0",
   "entries": [
     {
       "name": "apply",
@@ -51,7 +51,7 @@
     },
     {
       "name": "events",
-      "hash": "8e58c4d1e5d053f86701083f3c19ab98ab6ac43488bd10c7a3edb31c38c9b548"
+      "hash": "6f192c6454758b89fc087087bcb6a1e5ff35412f383889daea3775b7ae31f81b"
     },
     {
       "name": "health",

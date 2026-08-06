@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -245,6 +247,14 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		exe = os.Args[0]
 	}
 	runStart := time.Now()
+	// One id per run, minted here and inherited by every step's child
+	// process. Random rather than sequential: two runs against the same
+	// state dir must not collide, and a counter would need state of its
+	// own.
+	runID, err := newAuditRunID()
+	if err != nil {
+		return output.NewError("INTERNAL_ERROR", output.ExitGeneralError, err.Error())
+	}
 
 	// Dry-run prints its plan to Out. In json mode that is the same stream
 	// the RunResult goes to, so the plan lines land in front of the JSON
@@ -269,6 +279,8 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		StateDir:       paths.BaseDir(),
 		RequirePrivate: guard.Requested(),
 		AllowHostExec:  recipeAllowHostExec,
+		RunID:          runID,
+		RunIDEnv:       AuditRunIDEnv,
 		// Host steps never re-enter trond, so nothing else would record
 		// them. Detail names the step and its program — an identifier,
 		// not the argv or the script body.
@@ -278,6 +290,7 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 				result, code = "error", "HOST_STEP_ERROR"
 			}
 			writeAudit(auditEvent{
+				RunID:     runID,
 				Command:   "recipe host-step",
 				Result:    result,
 				ErrorCode: code,
@@ -297,6 +310,7 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 			result, code = "error", "RECIPE_FAILED"
 		}
 		writeAudit(auditEvent{
+			RunID:     runID,
 			Command:   "recipe run",
 			Result:    result,
 			ErrorCode: code,
@@ -330,6 +344,15 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		return output.NewError("RECIPE_FAILED", exit, runErr.Error())
 	}
 	return nil
+}
+
+// newAuditRunID mints a short random correlation id.
+func newAuditRunID() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate audit run id: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // hostStepProgram names what a host step executes, for the audit detail:

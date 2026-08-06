@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/tronprotocol/tron-deployment/internal/guard"
@@ -177,8 +179,15 @@ type auditEvent struct {
 	Result     string // "success", "error", "rollback"
 	ErrorCode  string
 	Detail     string // what was acted on; identifiers only, never payloads
+	RunID      string // set by the process that mints the id; children inherit it via the environment
 	Start      time.Time
 }
+
+// AuditRunIDEnv carries a recipe run's correlation id into the steps it
+// re-execs. Read from the environment rather than passed as a flag: every
+// trond command writes audit entries, and threading a parameter through
+// all of them to serve one caller is the wrong shape.
+const AuditRunIDEnv = "TROND_AUDIT_RUN_ID"
 
 // writeAudit writes an audit log entry for a mutating command. Failures are
 // logged but never propagated — losing an audit line should not break the
@@ -199,6 +208,7 @@ func writeAudit(ev auditEvent) {
 		DurationMs: time.Since(ev.Start).Milliseconds(),
 		ErrorCode:  ev.ErrorCode,
 		Detail:     ev.Detail,
+		RunID:      cmp.Or(ev.RunID, os.Getenv(AuditRunIDEnv)),
 	}
 	if writeErr := al.Write(entry); writeErr != nil {
 		Log().Warn("audit log write failed", "error", writeErr)

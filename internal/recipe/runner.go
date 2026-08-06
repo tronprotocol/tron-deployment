@@ -81,6 +81,37 @@ type RunOptions struct {
 	// policy belong to the CLI, and internal/recipe should not grow an
 	// opinion about either.
 	AuditHostStep func(step Step, res StepResult)
+
+	// RunID is a correlation id exported into every step's environment,
+	// so the audit entries a command step writes as a child process can
+	// be tied back to the run that caused them. Empty means "do not set
+	// it", which keeps a direct Run() call from inventing one.
+	RunID string
+
+	// RunIDEnv names the environment variable RunID travels in. The CLI
+	// owns the name; internal/recipe should not hard-code a convention
+	// that belongs to the audit log.
+	RunIDEnv string
+}
+
+// childEnv returns the environment for a step's child process: the
+// inherited environment, plus the correlation id, plus any step-level
+// overrides. Returns nil when there is nothing to add, so exec inherits
+// the parent environment unchanged.
+func (o RunOptions) childEnv(extra map[string]string) []string {
+	if o.RunID == "" || o.RunIDEnv == "" {
+		if len(extra) == 0 {
+			return nil
+		}
+	}
+	env := os.Environ()
+	if o.RunID != "" && o.RunIDEnv != "" {
+		env = append(env, o.RunIDEnv+"="+o.RunID)
+	}
+	for _, k := range sortedEnvKeys(extra) {
+		env = append(env, k+"="+extra[k])
+	}
+	return env
 }
 
 // Run executes a recipe. Returns a RunResult plus error; the error is
@@ -275,6 +306,7 @@ func runStep(ctx context.Context, opts RunOptions, step Step, args []string) (St
 	start := time.Now()
 
 	cmd := exec.CommandContext(ctx, opts.Binary, full...)
+	cmd.Env = opts.childEnv(nil)
 	cmd.Stderr = opts.Err
 	stdout, err := cmd.Output()
 	res.DurationMs = time.Since(start).Milliseconds()
@@ -402,12 +434,7 @@ func runHostStep(ctx context.Context, opts RunOptions, step Step, args []string)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = step.Dir
 	cmd.Stderr = opts.Err
-	if len(step.Env) > 0 {
-		cmd.Env = os.Environ()
-		for _, k := range sortedEnvKeys(step.Env) {
-			cmd.Env = append(cmd.Env, k+"="+step.Env[k])
-		}
-	}
+	cmd.Env = opts.childEnv(step.Env)
 	stdout, err := cmd.Output()
 	res.DurationMs = time.Since(start).Milliseconds()
 	if cmd.ProcessState != nil {
