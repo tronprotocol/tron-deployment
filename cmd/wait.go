@@ -118,6 +118,16 @@ func runWait(cmd *cobra.Command, args []string) error {
 	}
 	defer nc.Close()
 
+	// Validate once, before the poll loop: a bad --http should fail now,
+	// not on every attempt until the timeout expires.
+	var probeURL string
+	if waitHTTP != "" {
+		probeURL, err = httpProbeURL(expandHTTPURL(waitHTTP, nc.Node.HTTPPort))
+		if err != nil {
+			return err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(cmd.Context(), waitTimeout)
 	defer cancel()
 
@@ -131,7 +141,7 @@ func runWait(cmd *cobra.Command, args []string) error {
 		case waitPort != 0:
 			probeErr = probeTCP(ctx, nc.Target, waitPort)
 		case waitHTTP != "":
-			probeErr = probeHTTP(ctx, nc, expandHTTPURL(waitHTTP, nc.Node.HTTPPort))
+			probeErr = probeHTTP(ctx, nc, probeURL)
 		case waitExec != "":
 			probeErr = probeExec(ctx, nc, waitExec)
 		}
@@ -187,6 +197,20 @@ func probeTCP(ctx context.Context, _ target.Target, port int) error {
 // probeHTTP runs curl inside the node via Target.Exec so the probe sees the
 // container's network. For local docker nodes this routes through `docker
 // exec`; for jar / SSH nodes it runs on the target host directly.
+// httpProbeURL validates the --http value before it becomes an argv item
+// for curl on the node. Without the scheme check a value like
+// "-K/etc/shadow" or "-o/tmp/x" is an option rather than a URL, and curl
+// reads it as one. It is argv rather than a shell, so this is a narrow
+// hole — but "starts with http:// or https://" costs one comparison and
+// closes it.
+func httpProbeURL(raw string) (string, error) {
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return "", output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			fmt.Sprintf("--http must be an http:// or https:// URL (or contain {http}), got %q", raw))
+	}
+	return raw, nil
+}
+
 func probeHTTP(ctx context.Context, nc *nodeContext, url string) error {
 	args := []string{"-fsS", "--max-time", "5", url}
 	out, err := nc.runtimeExec(ctx, "curl", args...)
