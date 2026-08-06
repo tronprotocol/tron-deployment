@@ -912,7 +912,30 @@ trond recipe show <name>                            # YAML + params + steps
 trond recipe run <name> --param key=value [...]     # execute end-to-end
 trond recipe run <name> ... --dry-run               # print resolved chain, no exec
 trond recipe run <name> ... --resume-from <step>    # skip ahead after a partial run
+
+trond recipe run --file ./my.yaml --param k=v        # a recipe of your own
+trond recipe show --file ./my.yaml                   # inspect one without running it
+trond recipe validate --file ./my.yaml               # parse + check, execute nothing
 ```
+
+Files passed to `--file` are parsed **strictly** — unknown fields, a
+second YAML document, or a structural problem are refused up front,
+with every problem reported at once. A recipe is a sequence of real
+operations; the expensive place to find a typo is step four.
+
+Steps come in two kinds:
+
+- **`kind: command`** (the default) re-execs trond with a subcommand
+  path. The run's `--state-dir` and `--require-private` are forwarded, so
+  a step acts in the same place and under the same policy as the run that
+  launched it.
+- **`kind: host`** runs a program on the machine running trond, via
+  `run: [prog, arg]` (argv, no shell) or `script: |` (a shell body). It
+  is the only step that escapes trond's own surface, so it needs
+  `--allow-host-exec`, **and it is refused outright under
+  `--require-private`** — a host step names no node, so the gate has
+  nothing to check and cannot vouch for it. `--dry-run` still previews
+  host steps under either refusal.
 
 The runner re-execs the trond binary itself for each step (no shell
 dependency beyond `exec`), captures stdout JSON, and feeds named

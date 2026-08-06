@@ -65,6 +65,7 @@ var (
 	recipeRunDryRun     bool
 	recipeRunResumeFrom string
 	recipeFile          string
+	recipeAllowHostExec bool
 	recipeShowFile      string
 	recipeValidateFile  string
 )
@@ -152,6 +153,8 @@ func init() {
 		"Skip every step before this step ID (use the recipe's `id:` value)")
 	recipeRunCmd.Flags().StringVar(&recipeFile, "file", "",
 		"Run a recipe from this YAML file instead of a built-in name")
+	recipeRunCmd.Flags().BoolVar(&recipeAllowHostExec, "allow-host-exec", false,
+		"Permit `kind: host` steps, which run arbitrary programs on this machine")
 	recipeShowCmd.Flags().StringVar(&recipeShowFile, "file", "",
 		"Show a recipe from this YAML file instead of a built-in name")
 	recipeValidateCmd.Flags().StringVar(&recipeValidateFile, "file", "",
@@ -263,6 +266,7 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		// directory, so this covers --state-dir and TROND_STATE_DIR alike.
 		StateDir:       paths.BaseDir(),
 		RequirePrivate: guard.Requested(),
+		AllowHostExec:  recipeAllowHostExec,
 	})
 
 	if res != nil {

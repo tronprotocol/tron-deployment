@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -55,6 +56,16 @@ type RunOptions struct {
 	// while the identical run started with TROND_REQUIRE_PRIVATE=1 is
 	// gated — the safety floor would depend on which way you asked for it.
 	RequirePrivate bool
+
+	// AllowHostExec permits `kind: host` steps, which run arbitrary
+	// programs on the machine running trond rather than trond
+	// subcommands. Off by default: every other step kind is bounded by
+	// what trond itself will do (and each of those is individually gated
+	// and audited), while a host step is bounded by nothing. Requiring
+	// the caller to say so makes "this run may execute arbitrary
+	// programs" an explicit, greppable decision rather than a property
+	// of whichever file was passed to --file.
+	AllowHostExec bool
 }
 
 // Run executes a recipe. Returns a RunResult plus error; the error is
@@ -113,12 +124,31 @@ func Run(ctx context.Context, r Recipe, opts RunOptions) (*RunResult, error) {
 			}
 		}
 
-		args, err := substituteAll(step.Args, resolved, stepsState)
+		// A host step's arguments live in run[1:] (run[0] is the program
+		// and is never templated — a substituted program name would make
+		// "what does this recipe execute" unanswerable by reading it).
+		toSubstitute := step.Args
+		if step.Kind == KindHost && len(step.Run) > 1 {
+			toSubstitute = step.Run[1:]
+		}
+		args, err := substituteAll(toSubstitute, resolved, stepsState)
 		if err != nil {
 			return result, fmt.Errorf("step %s: %w", step.ID, err)
 		}
 
-		stepResult, err := runStep(ctx, opts, step, args)
+		st := step
+		if len(step.Env) > 0 {
+			st.Env = make(map[string]string, len(step.Env))
+			for k, v := range step.Env {
+				sv, err := substitute(v, resolved, stepsState)
+				if err != nil {
+					return result, fmt.Errorf("step %s: env %s: %w", step.ID, k, err)
+				}
+				st.Env[k] = sv
+			}
+		}
+
+		stepResult, err := runStep(ctx, opts, st, args)
 		result.Steps = append(result.Steps, stepResult)
 
 		// Persist BEFORE the failure switch. Rollback steps exist to clean
@@ -194,6 +224,10 @@ func stepIDs(steps []Step) string {
 
 // runStep handles a single step's exec + output capture.
 func runStep(ctx context.Context, opts RunOptions, step Step, args []string) (StepResult, error) {
+	if step.Kind == KindHost {
+		return runHostStep(ctx, opts, step, args)
+	}
+
 	res := StepResult{ID: step.ID}
 	if step.Command == "" {
 		res.Error = "step has no command"
@@ -295,4 +329,91 @@ func paramNames(ps []Param) string {
 		names = append(names, p.Name)
 	}
 	return strings.Join(names, ", ")
+}
+
+// runHostStep runs a program on the machine running trond.
+//
+// Two refusals happen here rather than at load time, because both depend
+// on how the run was invoked rather than on what the recipe says:
+//
+//   - Without AllowHostExec the step does not run. A recipe file is
+//     content, and --file makes it content from anywhere; the operator
+//     opting into arbitrary execution is a separate decision from
+//     choosing the file.
+//
+//   - Under the private gate it does not run either, and that one is not
+//     negotiable. `--require-private` promises an agent is "mechanically
+//     incapable of mutating a mainnet/nile rig" (AGENTS.md). A host step
+//     can delete a mainnet node's data directory without ever naming the
+//     node, so honouring that promise means refusing, not inspecting the
+//     command and guessing. The gate has no node to check here — which is
+//     precisely why it must refuse rather than allow.
+//
+// --dry-run still previews host steps under either refusal: printing what
+// would run changes nothing, and the same reasoning already lets
+// `auto-heal --dry-run` through the gate.
+func runHostStep(ctx context.Context, opts RunOptions, step Step, args []string) (StepResult, error) {
+	res := StepResult{ID: step.ID}
+
+	var argv []string
+	switch {
+	case len(step.Run) > 0:
+		argv = append([]string{step.Run[0]}, args...)
+	case step.Script != "":
+		argv = []string{"sh", "-c", step.Script}
+	default:
+		res.Error = "host step has neither run nor script"
+		return res, errors.New(res.Error)
+	}
+
+	if opts.DryRun {
+		fmt.Fprintf(opts.Out, "  [%s] would run on host: %s\n", step.ID, strings.Join(argv, " "))
+		return res, nil
+	}
+	if opts.RequirePrivate {
+		res.Error = "host step refused: --require-private is set, and a host step runs " +
+			"outside any node's network so the gate cannot vouch for it"
+		return res, errors.New(res.Error)
+	}
+	if !opts.AllowHostExec {
+		res.Error = "host step refused: pass --allow-host-exec to permit `kind: host` steps, " +
+			"which run arbitrary programs on this machine"
+		return res, errors.New(res.Error)
+	}
+
+	fmt.Fprintf(opts.Err, "  [%s] host: %s\n", step.ID, strings.Join(argv, " "))
+	start := time.Now()
+
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = step.Dir
+	cmd.Stderr = opts.Err
+	if len(step.Env) > 0 {
+		cmd.Env = os.Environ()
+		for _, k := range sortedEnvKeys(step.Env) {
+			cmd.Env = append(cmd.Env, k+"="+step.Env[k])
+		}
+	}
+	stdout, err := cmd.Output()
+	res.DurationMs = time.Since(start).Milliseconds()
+	if cmd.ProcessState != nil {
+		res.ExitCode = cmd.ProcessState.ExitCode()
+	}
+	// A host step is not obliged to emit JSON; captureOutput returns an
+	// empty map when it does not, and one that does emit JSON feeds
+	// {{ steps.<id>.<field> }} exactly like a command step.
+	res.Output = captureOutput(stdout)
+	if err != nil {
+		res.Error = err.Error()
+		return res, err
+	}
+	return res, nil
+}
+
+func sortedEnvKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

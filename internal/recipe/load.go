@@ -127,8 +127,33 @@ func validateSteps(section string, steps []Step) []string {
 		if strings.TrimSpace(s.ID) == "" {
 			problems = append(problems, where+": id is required")
 		}
-		if strings.TrimSpace(s.Command) == "" {
-			problems = append(problems, where+": command is required")
+		switch s.Kind {
+		case "", KindCommand:
+			if strings.TrimSpace(s.Command) == "" {
+				problems = append(problems, where+": command is required")
+			}
+			if len(s.Run) > 0 || s.Script != "" || s.Dir != "" || len(s.Env) > 0 {
+				problems = append(problems, where+
+					": run/script/dir/env belong to `kind: host` steps")
+			}
+		case KindHost:
+			// Exactly one of run/script. Accepting both would leave the
+			// recipe's own text ambiguous about what it executes.
+			switch {
+			case len(s.Run) > 0 && s.Script != "":
+				problems = append(problems, where+": set run or script, not both")
+			case len(s.Run) == 0 && s.Script == "":
+				problems = append(problems, where+": a host step needs run or script")
+			case len(s.Run) > 0 && strings.TrimSpace(s.Run[0]) == "":
+				problems = append(problems, where+": run[0] (the program) is empty")
+			}
+			if s.Command != "" {
+				problems = append(problems, where+
+					": command belongs to `kind: command` steps; a host step uses run or script")
+			}
+		default:
+			problems = append(problems, fmt.Sprintf(
+				"%s: kind %q is not one of command, host", where, s.Kind))
 		}
 		if !validOnFailure[s.OnFailure] {
 			problems = append(problems, fmt.Sprintf(

@@ -1,16 +1,25 @@
 // Package recipe runs declarative trond multi-step workflows.
 //
-// A recipe is a YAML document in recipes/*.yaml that codifies one of
-// the canonical workflows from AGENTS.md (deploy fresh node, snapshot
-// then apply, recover from failed upgrade, etc.). Each step calls a
-// trond subcommand with arguments that can reference the user-supplied
-// parameters and outputs from earlier steps via {{ params.* }} /
-// {{ steps.<id>.<field> }} template substitution.
+// A recipe is a YAML document — one of the built-ins embedded from
+// files/*.yaml, or any file passed to `recipe run --file` — codifying a
+// workflow from AGENTS.md (deploy fresh node, snapshot then apply,
+// recover from failed upgrade, etc.). Arguments can reference the
+// user-supplied parameters and the outputs of earlier steps via
+// {{ params.* }} / {{ steps.<id>.<field> }} substitution.
 //
-// The runner re-execs the trond binary itself for each step (no shell
-// dependency beyond exec) and captures the JSON output for downstream
-// references. This keeps every step idempotent and testable in
-// isolation.
+// There are two kinds of step:
+//
+//   - kind: command (the default) re-execs the trond binary with a
+//     subcommand path, and captures its JSON for downstream references.
+//     The run's --state-dir and --require-private are forwarded, so a
+//     step acts in the same place and under the same safety policy as
+//     the run that launched it.
+//
+//   - kind: host runs a program on the machine running trond. It is the
+//     only step that escapes trond's own surface, so it is refused
+//     unless --allow-host-exec is passed, and refused outright under
+//     --require-private: a host step names no node, so the gate has
+//     nothing to check and cannot vouch for it.
 package recipe
 
 import "encoding/json"
@@ -43,12 +52,55 @@ type Param struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
-// Step is one unit of work. Today only command steps are supported;
-// future kinds (poll, sleep, branch) live behind the same struct so
-// recipes don't need migration when added.
+// Step kinds.
+//
+// The zero value is KindCommand, and that is load-bearing: it is what
+// keeps every recipe written before this field existed parsing and
+// running byte-identically.
+//
+// "host" rather than "exec" or "local": `trond exec <node>` already means
+// the opposite of this (run something INSIDE a managed node), and "local"
+// collides with `target: {type: local}`, which is about where a node
+// lives, not where a step runs.
+const (
+	KindCommand = "command" // re-exec the trond binary with a subcommand path
+	KindHost    = "host"    // run a program on the machine running trond
+)
+
+// Step is one unit of work.
 type Step struct {
 	ID          string `yaml:"id"                   json:"id"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
+	// Kind selects the executor: "command" (default) or "host". Never
+	// normalised on the wire, so `recipe show -o json` for an existing
+	// recipe stays byte-identical to what it printed before.
+	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
+
+	// Run is the argv of a host step: run[0] is the program, one YAML
+	// item per token. Deliberately NOT whitespace-split — a path with a
+	// space in it would otherwise become two arguments — and deliberately
+	// not a shell, so `script:` is the only way to get one and
+	// `grep -l 'script:'` is a complete census of shell usage in a
+	// recipe tree. Mutually exclusive with Script.
+	Run []string `yaml:"run,omitempty" json:"run,omitempty"`
+
+	// Script is a shell body run as `sh -c <script>`. Mutually exclusive
+	// with Run. Use it when you need pipes, globs or conditionals;
+	// prefer Run when you do not, because argv has no quoting rules to
+	// get wrong.
+	Script string `yaml:"script,omitempty" json:"script,omitempty"`
+
+	// Dir is the working directory for a host step. Relative paths are
+	// resolved against the process's cwd, not the recipe's location —
+	// a recipe should not silently depend on where its file happens to
+	// sit.
+	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
+
+	// Env adds environment variables to a host step, on top of the
+	// inherited environment. Values go through the same substitution as
+	// args.
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 
 	// Command is the trond subcommand path to invoke, e.g.
 	// "config validate", "snapshot download", "apply". Trond's own
