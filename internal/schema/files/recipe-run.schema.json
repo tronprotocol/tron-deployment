@@ -4,43 +4,90 @@
   "title": "trond recipe run output",
   "description": "Returned by `trond recipe run <name> -o json`. Stable shape so an MCP recipe.run tool can pass it through verbatim.",
   "type": "object",
-  "required": ["recipe", "status", "started_at", "duration_ms", "steps"],
+  "required": [
+    "recipe",
+    "status",
+    "started_at",
+    "duration_ms",
+    "steps"
+  ],
   "properties": {
-    "recipe":      { "type": "string", "description": "The .name of the recipe that was run." },
+    "recipe": {
+      "type": "string",
+      "description": "The .name of the recipe that was run."
+    },
+    "source": {
+      "type": "string",
+      "description": "Where the recipe came from: \"builtin:<name>\" or the --file path."
+    },
     "status": {
       "type": "string",
-      "enum": ["success", "failed", "rolled_back"],
+      "enum": [
+        "success",
+        "failed",
+        "rolled_back"
+      ],
       "description": "Aggregate verdict. failed=a step's on_failure=abort triggered; rolled_back=on_failure=rollback triggered and the rollback section ran."
     },
-    "started_at":  { "type": "string", "format": "date-time" },
-    "duration_ms": { "type": "integer", "minimum": 0 },
-    "failed_at":   { "type": "string", "description": "Step ID that triggered failure; absent on success." },
-    "rollback_ran":  { "type": "boolean" },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed_at": {
+      "type": "string",
+      "description": "Step ID that triggered failure; absent on success."
+    },
+    "rollback_ran": {
+      "type": "boolean"
+    },
     "steps": {
       "type": "array",
-      "items": { "$ref": "#/$defs/stepResult" }
+      "items": {
+        "$ref": "#/$defs/stepResult"
+      }
     },
     "rollback_steps": {
       "type": "array",
       "description": "Records for each rollback step that ran (only set when rollback_ran=true).",
-      "items": { "$ref": "#/$defs/stepResult" }
+      "items": {
+        "$ref": "#/$defs/stepResult"
+      }
     }
   },
   "$defs": {
     "stepResult": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id":          { "type": "string" },
-        "skipped":     { "type": "boolean", "description": "True when --resume-from passed this step or its skip predicate evaluated true." },
-        "exit_code":   { "type": "integer" },
-        "duration_ms": { "type": "integer", "minimum": 0 },
+        "id": {
+          "type": "string"
+        },
+        "skipped": {
+          "type": "boolean",
+          "description": "True when --resume-from passed this step or its skip predicate evaluated true."
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
         "output": {
           "type": "object",
           "description": "JSON object captured from the step's stdout (when the step's command supports -o json).",
           "additionalProperties": true
         },
-        "error":       { "type": "string", "description": "Set when the step's command exited non-zero." }
+        "error": {
+          "type": "string",
+          "description": "Set when the step's command exited non-zero."
+        }
       }
     }
   }

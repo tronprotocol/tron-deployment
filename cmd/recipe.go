@@ -40,17 +40,84 @@ var recipeListCmd = &cobra.Command{
 }
 
 var recipeShowCmd = &cobra.Command{
-	Use:   "show <name>",
+	Use:   "show [name]",
 	Short: "Print one recipe's YAML and parameter list",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.RangeArgs(0, 1),
 	RunE:  runRecipeShow,
+}
+
+var recipeValidateCmd = &cobra.Command{
+	Use:   "validate --file <path>",
+	Short: "Parse and check a recipe file without running it",
+	Long: `Load a recipe from disk, parse it strictly and report every structural
+problem at once, without executing a single step.
+
+Running a recipe is a sequence of real operations against real nodes.
+The expensive place to find out that a step id is missing, or that
+on_failure was misspelled, is step four — after steps one to three have
+already changed something. This is the cheap place.`,
+	Args: cobra.NoArgs,
+	RunE: runRecipeValidate,
 }
 
 var (
 	recipeRunParams     []string
 	recipeRunDryRun     bool
 	recipeRunResumeFrom string
+	recipeFile          string
+	recipeShowFile      string
+	recipeValidateFile  string
 )
+
+// resolveRecipe picks the recipe a command should act on: either a
+// built-in by name, or a file via --file. Exactly one, never both — a
+// command that silently preferred one would run something other than
+// what the caller named.
+func resolveRecipe(args []string, file string) (recipe.Recipe, string, error) {
+	switch {
+	case file != "" && len(args) > 0:
+		return recipe.Recipe{}, "", output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			fmt.Sprintf("give a recipe name or --file, not both (got name %q and --file %q)", args[0], file))
+	case file != "":
+		r, err := recipe.LoadFile(file)
+		if err != nil {
+			return recipe.Recipe{}, "", output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
+		}
+		return r, file, nil
+	case len(args) > 0:
+		r, err := recipe.Get(args[0])
+		if err != nil {
+			return recipe.Recipe{}, "", output.NewError("NOT_FOUND", output.ExitGeneralError, err.Error())
+		}
+		return r, "builtin:" + args[0], nil
+	default:
+		return recipe.Recipe{}, "", output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			"specify a recipe name or --file <path>")
+	}
+}
+
+func runRecipeValidate(cmd *cobra.Command, _ []string) error {
+	outputFmt, _ := cmd.Flags().GetString("output")
+	if recipeValidateFile == "" {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, "--file is required")
+	}
+	r, err := recipe.LoadFile(recipeValidateFile)
+	if err != nil {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
+	}
+	res := map[string]any{
+		"valid":  true,
+		"source": recipeValidateFile,
+		"name":   r.Name,
+		"steps":  len(r.Steps),
+		"params": len(r.Params),
+	}
+	if outputFmt == "json" {
+		return jsonStdout(res)
+	}
+	fmt.Printf("%s: ok — %d steps, %d params\n", r.Name, len(r.Steps), len(r.Params))
+	return nil
+}
 
 var recipeRunCmd = &cobra.Command{
 	Use:   "run <name>",
@@ -72,7 +139,7 @@ Examples:
     --param node=my-fullnode \
     --param version=4.8.1 \
     --param intent_path=examples/mainnet-fullnode.yaml`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.RangeArgs(0, 1),
 	RunE: runRecipeRun,
 }
 
@@ -83,10 +150,17 @@ func init() {
 		"Print each step's resolved command without executing")
 	recipeRunCmd.Flags().StringVar(&recipeRunResumeFrom, "resume-from", "",
 		"Skip every step before this step ID (use the recipe's `id:` value)")
+	recipeRunCmd.Flags().StringVar(&recipeFile, "file", "",
+		"Run a recipe from this YAML file instead of a built-in name")
+	recipeShowCmd.Flags().StringVar(&recipeShowFile, "file", "",
+		"Show a recipe from this YAML file instead of a built-in name")
+	recipeValidateCmd.Flags().StringVar(&recipeValidateFile, "file", "",
+		"Recipe YAML file to parse and check")
 
 	recipeCmd.AddCommand(recipeListCmd)
 	recipeCmd.AddCommand(recipeShowCmd)
 	recipeCmd.AddCommand(recipeRunCmd)
+	recipeCmd.AddCommand(recipeValidateCmd)
 	rootCmd.AddCommand(recipeCmd)
 }
 
@@ -116,9 +190,9 @@ func runRecipeList(cmd *cobra.Command, _ []string) error {
 
 func runRecipeShow(cmd *cobra.Command, args []string) error {
 	outputFmt, _ := cmd.Flags().GetString("output")
-	r, err := recipe.Get(args[0])
+	r, _, err := resolveRecipe(args, recipeShowFile)
 	if err != nil {
-		return output.NewError("NOT_FOUND", output.ExitGeneralError, err.Error())
+		return err
 	}
 	if outputFmt == "json" {
 		return jsonStdout(r)
@@ -152,9 +226,9 @@ func runRecipeShow(cmd *cobra.Command, args []string) error {
 
 func runRecipeRun(cmd *cobra.Command, args []string) error {
 	outputFmt, _ := cmd.Flags().GetString("output")
-	r, err := recipe.Get(args[0])
+	r, source, err := resolveRecipe(args, recipeFile)
 	if err != nil {
-		return output.NewError("NOT_FOUND", output.ExitGeneralError, err.Error())
+		return err
 	}
 
 	params, err := parseParamFlags(recipeRunParams)
@@ -191,6 +265,9 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		RequirePrivate: guard.Requested(),
 	})
 
+	if res != nil {
+		res.Source = source
+	}
 	if outputFmt == "json" && res != nil {
 		_ = jsonStdout(res)
 	} else if res != nil && !recipeRunDryRun {

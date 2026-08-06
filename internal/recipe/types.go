@@ -92,7 +92,15 @@ type StepResult struct {
 // RunResult is what `recipe run` returns at the end. Stable JSON
 // shape so an MCP recipe-runner tool can return it verbatim.
 type RunResult struct {
-	Recipe        string       `json:"recipe"`
+	Recipe string `json:"recipe"`
+
+	// Source records where the recipe came from: "builtin:<name>" or the
+	// path passed to --file. Set by the CLI, not the runner — the runner
+	// is handed a parsed Recipe and has no idea where it was read from.
+	// A run against a file on disk is otherwise indistinguishable in its
+	// output from a run of the built-in with the same name.
+	Source string `json:"source,omitempty"`
+
 	Status        string       `json:"status"` // success | failed | aborted | rolled_back
 	StartedAt     string       `json:"started_at"`
 	DurationMs    int64        `json:"duration_ms"`

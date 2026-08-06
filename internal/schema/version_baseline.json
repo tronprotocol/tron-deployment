@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.12.5",
+  "schema_version": "1.13.0",
   "entries": [
     {
       "name": "apply",
@@ -87,11 +87,15 @@
     },
     {
       "name": "recipe-run",
-      "hash": "8224043f170ccc4fb4afe998a3b6bf19e051a1e1eaba3e6d3b70a93a3b48f535"
+      "hash": "9bcd23e35f8dd03864905398d722b2d3e43829d89414c0b26dbacd0f536b672a"
     },
     {
       "name": "recipe-show",
       "hash": "488d34dc919a5aa0f482656c34aa43c15b92c6acf5bd7105ebbe06877b303084"
+    },
+    {
+      "name": "recipe-validate",
+      "hash": "fd7205de5915bdef541e2da867a2eb6ea8c50d1d551a42a0882c11bbf3d96d4f"
     },
     {
       "name": "shadow-fork-mutate",

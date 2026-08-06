@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/recipe-validate.schema.json",
+  "title": "trond recipe validate --output json",
+  "description": "Result of parsing and checking a recipe file without executing it. A structural problem is reported through the standard error envelope (VALIDATION_ERROR, exit 2), so this shape is only ever emitted for a recipe that passed.",
+  "type": "object",
+  "required": [
+    "valid",
+    "source",
+    "name",
+    "steps",
+    "params"
+  ],
+  "properties": {
+    "valid": {
+      "type": "boolean",
+      "description": "Always true when this shape is emitted; a failure uses the error envelope instead."
+    },
+    "source": {
+      "type": "string",
+      "description": "Path the recipe was read from."
+    },
+    "name": {
+      "type": "string",
+      "description": "The recipe's declared name field."
+    },
+    "steps": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of steps in the recipe's steps list."
+    },
+    "params": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of declared params."
+    }
+  }
+}

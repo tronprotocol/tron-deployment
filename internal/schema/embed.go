@@ -119,7 +119,7 @@ import (
 //	        `md5_verified: false` on a successful download means one
 //	        thing only: the operator passed `--no-verify` / `no_verify`.
 //	        One existing schema, one additive optional field — PATCH.
-const SchemaVersion = "1.12.5"
+const SchemaVersion = "1.13.0"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so
