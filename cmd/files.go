@@ -131,6 +131,12 @@ func runFilesGet(cmd *cobra.Command, args []string) error {
 	nodeName, remoteSrc, localDst := args[0], args[1], args[2]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
+	// get reads an arbitrary path off the node. That is not a mutation, so
+	// it is not gated — but a jar node's config.conf carries the
+	// block-signing key in localwitness, so which path was read is worth
+	// recording even when reading it was entirely legitimate.
+	start := time.Now()
+
 	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err
@@ -177,6 +183,8 @@ func runFilesGet(cmd *cobra.Command, args []string) error {
 		return output.NewError("FILES_ERROR", output.ExitGeneralError, err.Error())
 	}
 
+	writeAudit(auditEvent{Command: "files get", Node: nodeName, Target: nc.Target.String(),
+		Result: "success", Detail: remoteSrc, Start: start})
 	return writeFilesResult(outputFmt, "get", nodeName, remoteSrc, localDst, len(data))
 }
 
