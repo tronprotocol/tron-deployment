@@ -35,6 +35,20 @@ import (
 // Note on expiration: the node assigns expiration = head_block_time +
 // 60s by default for HTTP-built transactions. txgen rewrites raw_data
 // before signing so generated transactions use cfg.Generate.ExpirationMillis.
+//
+// expirationSpreadMillis bounds the per-transaction expiration offset that
+// keeps otherwise-identical transactions from sharing a txID. 60s of
+// spread over a default 60s lifetime stays far below java-tron's 24h
+// ceiling while giving 60,000 distinct values — far more than the number
+// of transactions that can share a single millisecond timestamp.
+const expirationSpreadMillis = 60_000
+
+// expirationNonce hands every transaction in a run a distinct offset. It
+// is process-global rather than per-worker because workers build
+// transactions concurrently and a per-worker counter would collide
+// across them.
+var expirationNonce atomic.Int64
+
 func runGenerate(ctx context.Context, cfg *Config) error {
 	// 0700: receivers.csv lands here with one cleartext secp256k1
 	// private key per receiver, so the directory must not be traversable
@@ -334,7 +348,21 @@ func generateBatch(
 			fail++
 			continue
 		}
-		if err := unsigned.ExtendExpiration(cfg.Generate.ExpirationMillis); err != nil {
+		// Nudge each transaction's expiration by a distinct amount.
+		//
+		// The node stamps raw_data.timestamp with its own clock, so N
+		// transactions built in the same millisecond with the same
+		// sender, receiver and amount have byte-identical raw_data —
+		// hence one txID, and the node rejects all but the first with
+		// DUP_TRANSACTION_ERROR. Nothing said so: the run reported the
+		// full count generated and a quietly smaller count accepted,
+		// which reads as node backpressure rather than a generator bug.
+		//
+		// The offset is bounded so it cannot walk expiration toward
+		// java-tron's 24h ceiling; expiration is a deadline, so moving it
+		// by milliseconds changes nothing a load test cares about.
+		nonce := expirationNonce.Add(1) % expirationSpreadMillis
+		if err := unsigned.ExtendExpiration(cfg.Generate.ExpirationMillis + nonce); err != nil {
 			fail++
 			continue
 		}
