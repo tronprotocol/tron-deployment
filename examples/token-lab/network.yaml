@@ -1,0 +1,25 @@
+name: trc20-lab
+target: {type: local, runtime: docker}
+network: private
+nodes:
+  - type: witness
+    version: latest
+    witness_key: {private_key_env: SR_PRIVATE_KEY}
+    resources: {memory: 4GB}
+    ports: {http: 8390, grpc: 50351, p2p: 19988}
+    config_overrides:
+      node.rpc.minEffectiveConnection: 0
+      # Contracts DEPLOY without these and then never execute: calls return
+      # empty with no energy used, which reads as a broken contract rather
+      # than a chain missing its TVM upgrades. These seed the dynamic
+      # properties at genesis, so they must be set before the first block.
+      vm.supportConstant: true
+      committee.allowTvmTransferTrc10: 1
+      committee.allowTvmConstantinople: 1
+      committee.allowTvmSolidity059: 1
+      committee.allowTvmIstanbul: 1
+      # TRC10 only. With this unset, transferasset's asset_name must be the
+      # token NAME; every tool that sends the numeric id — txgen included —
+      # gets "No asset!" and looks like it issued nothing. Mainnet has had
+      # this active for years, so a private chain without it is the odd one.
+      committee.allowSameTokenName: 1

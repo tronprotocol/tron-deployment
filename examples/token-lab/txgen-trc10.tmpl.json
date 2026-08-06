@@ -1,0 +1,7 @@
+{ "node": "__NODE__",
+  "generate": { "totalTxCount": __COUNT__, "receiverAddressCount": 20, "concurrency": 8,
+    "privateKey": "__KEY__", "outputDir": "__LAB__/out-trc10",
+    "txType": { "transfer": 0, "transferTrc10": 100, "transferTrc20": 0 },
+    "trc10Id": "__TOKEN__", "transferAmount": __AMOUNT__ },
+  "broadcast": { "inputDir": "__LAB__/out-trc10", "tpsLimit": 50,
+    "reportFile": "__LAB__/report-trc10.txt" } }

@@ -1,0 +1,7 @@
+node_modules/
+out/
+out-trc10/
+txgen.json
+txgen-trc20.json
+txgen-trc10.json
+report*.txt

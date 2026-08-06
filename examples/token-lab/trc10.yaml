@@ -1,0 +1,78 @@
+name: trc10-lab
+description: |
+  Issue a TRC10 asset on a private chain, drive transfers through it with
+  txgen, and verify the receivers hold exactly the amount sent.
+
+  Sibling of trc20.yaml. The shape is identical — create, await, mint,
+  load, verify — and only the mint and verify steps differ, because a
+  TRC10 balance lives on the account while a TRC20 balance lives behind a
+  contract call. TRC10 needs none of network.yaml's TVM flags: no VM is
+  involved.
+
+  Every step that leaves trond is `kind: host`, so this needs
+  --allow-host-exec.
+params:
+  - name: lab_dir
+    required: true
+  - name: node_url
+    default: http://127.0.0.1:8390
+  - name: sender_key
+    required: true
+  - name: owner_hex
+    default: "41928c9af0651632157ef27a2cf17ca72c575a4d21"
+  - name: tx_count
+    default: "200"
+  - name: amount
+    default: "1000"
+steps:
+  - id: create-network
+    command: network create
+    args: ["--intent", "{{ params.lab_dir }}/network.yaml"]
+
+  - id: await-chain
+    kind: host
+    env:
+      NODE_URL: "{{ params.node_url }}"
+    script: |
+      until curl -sf -X POST "$NODE_URL/wallet/getnowblock" | grep -q '"number"'; do sleep 2; done
+
+  - id: issue
+    kind: host
+    description: Issue the asset, or reuse it — an account may hold only one.
+    dir: "{{ params.lab_dir }}"
+    run: ["node", "scripts/issue-asset.js"]
+    env:
+      TRON_HOST: "{{ params.node_url }}"
+      TRON_PK: "{{ params.sender_key }}"
+
+  - id: load
+    kind: host
+    dir: "{{ params.lab_dir }}"
+    env:
+      NODE_URL: "{{ params.node_url }}"
+      LAB_DIR: "{{ params.lab_dir }}"
+      TOKEN: "{{ steps.issue.trc10_id }}"
+      KEY: "{{ params.sender_key }}"
+      COUNT: "{{ params.tx_count }}"
+      AMOUNT: "{{ params.amount }}"
+    script: |
+      set -e
+      sed -e "s|__NODE__|$NODE_URL|" -e "s|__LAB__|$LAB_DIR|" -e "s|__TOKEN__|$TOKEN|" \
+          -e "s|__KEY__|$KEY|" -e "s|__COUNT__|$COUNT|" -e "s|__AMOUNT__|$AMOUNT|" \
+          txgen-trc10.tmpl.json > txgen-trc10.json
+      txgen generate  -c txgen-trc10.json
+      txgen broadcast -c txgen-trc10.json
+
+  - id: verify
+    kind: host
+    description: Receivers must hold exactly tx_count * amount.
+    dir: "{{ params.lab_dir }}"
+    env:
+      EXPECTED_HINT: "{{ params.tx_count }} x {{ params.amount }}"
+    run: ["node", "scripts/expect.js",
+          "scripts/verify-trc10.js",
+          "{{ params.node_url }}",
+          "{{ steps.issue.trc10_id }}",
+          "{{ params.owner_hex }}",
+          "{{ params.lab_dir }}/out-trc10/receivers.csv",
+          "{{ params.tx_count }}", "{{ params.amount }}"]

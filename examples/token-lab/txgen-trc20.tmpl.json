@@ -1,0 +1,7 @@
+{ "node": "__NODE__",
+  "generate": { "totalTxCount": __COUNT__, "receiverAddressCount": 20, "concurrency": 8,
+    "privateKey": "__KEY__", "outputDir": "__LAB__/out",
+    "txType": { "transfer": 0, "transferTrc10": 0, "transferTrc20": 100 },
+    "trc20Address": "__CONTRACT__", "transferAmount": __AMOUNT__, "trc20FeeLimit": 100000000 },
+  "broadcast": { "inputDir": "__LAB__/out", "tpsLimit": 50,
+    "reportFile": "__LAB__/report-trc20.txt" } }
