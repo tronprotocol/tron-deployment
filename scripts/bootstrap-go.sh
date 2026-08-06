@@ -63,8 +63,15 @@ case "${os}-${arch}" in
 esac
 
 # Fast path: already extracted, binary works.
+#
+# GOTOOLCHAIN=local is load-bearing. Without it `go env GOVERSION` reports
+# the EFFECTIVE toolchain, and Go 1.21+ auto-upgrades to whatever go.mod's
+# `toolchain` line names — so an installed go1.25.9 reported itself as
+# go1.25.11, never matched GO_VERSION, and every single make invocation
+# deleted the toolchain and re-downloaded 55 MB. The check has to ask what
+# is installed here, not what this repo would rather use.
 if [ -x "${GO_DIR}/bin/go" ]; then
-    actual_version=$("${GO_DIR}/bin/go" env GOVERSION 2>/dev/null || echo "")
+    actual_version=$(GOTOOLCHAIN=local "${GO_DIR}/bin/go" env GOVERSION 2>/dev/null || echo "")
     if [ "$actual_version" = "go${GO_VERSION}" ]; then
         # Already correct version; nothing to do.
         exit 0
