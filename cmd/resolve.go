@@ -176,6 +176,7 @@ type auditEvent struct {
 	IntentHash string
 	Result     string // "success", "error", "rollback"
 	ErrorCode  string
+	Detail     string // what was acted on; identifiers only, never payloads
 	Start      time.Time
 }
 
@@ -197,6 +198,7 @@ func writeAudit(ev auditEvent) {
 		Result:     ev.Result,
 		DurationMs: time.Since(ev.Start).Milliseconds(),
 		ErrorCode:  ev.ErrorCode,
+		Detail:     ev.Detail,
 	}
 	if writeErr := al.Write(entry); writeErr != nil {
 		Log().Warn("audit log write failed", "error", writeErr)

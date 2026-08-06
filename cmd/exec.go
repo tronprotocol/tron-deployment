@@ -107,15 +107,14 @@ func runExec(cmd *cobra.Command, args []string) error {
 	os.Stdout.Write(out)
 	if execErr != nil {
 		writeAudit(auditEvent{Command: "exec", Node: nodeName, Target: nc.Target.String(),
-			Result: "error", ErrorCode: "EXEC_ERROR", Start: start})
+			Result: "error", ErrorCode: "EXEC_ERROR", Detail: bin, Start: start})
 		return output.NewError("EXEC_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("exec on %s failed: %v", nodeName, execErr))
 	}
-	// Audited like every other verb that touches a node. The entry records
-	// that an exec happened, not what ran: AuditEntry has no field for it,
-	// and the argv is the one place a caller is most likely to have put a
-	// token or key. Recording the program name would need a schema change.
+	// Detail is the program only. The rest of the argv is where a caller
+	// is most likely to have put a token, and an audit log is the wrong
+	// place to learn one.
 	writeAudit(auditEvent{Command: "exec", Node: nodeName, Target: nc.Target.String(),
-		Result: "success", Start: start})
+		Result: "success", Detail: bin, Start: start})
 	return nil
 }

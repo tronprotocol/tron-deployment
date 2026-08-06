@@ -66,6 +66,21 @@ type RunOptions struct {
 	// programs" an explicit, greppable decision rather than a property
 	// of whichever file was passed to --file.
 	AllowHostExec bool
+
+	// AuditHostStep, when set, is called after each host step that
+	// actually ran (not one refused or previewed).
+	//
+	// Host steps are the only kind nothing else records. A command step
+	// re-execs trond, and that child writes its own audit entry under its
+	// own verb — so the audit log already sees it, at the granularity of
+	// the verb. A host step never enters trond again, which would leave
+	// the most capable thing a recipe can do as the one thing the log
+	// never sees.
+	//
+	// A callback rather than a direct write: the audit log's location and
+	// policy belong to the CLI, and internal/recipe should not grow an
+	// opinion about either.
+	AuditHostStep func(step Step, res StepResult)
 }
 
 // Run executes a recipe. Returns a RunResult plus error; the error is
@@ -397,6 +412,12 @@ func runHostStep(ctx context.Context, opts RunOptions, step Step, args []string)
 	res.DurationMs = time.Since(start).Milliseconds()
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
+	}
+	if opts.AuditHostStep != nil {
+		if err != nil {
+			res.Error = err.Error()
+		}
+		opts.AuditHostStep(step, res)
 	}
 	// A host step is not obliged to emit JSON; captureOutput returns an
 	// empty map when it does not, and one that does emit JSON feeds

@@ -19,6 +19,18 @@ type AuditEntry struct {
 	Result     string    `json:"result"`
 	DurationMs int64     `json:"duration_ms"`
 	ErrorCode  string    `json:"error_code,omitempty"`
+
+	// Detail names WHAT the command acted on, for the verbs where the
+	// verb alone does not say. "exec" and "recipe host-step" run
+	// caller-supplied programs and "files put" writes caller-supplied
+	// bytes: an entry recording only that one of them happened cannot
+	// answer the question an audit log exists to answer.
+	//
+	// It carries an identifier — a program name, a destination path, a
+	// recipe source — never a payload. Full argv and file contents are
+	// exactly where a caller is most likely to have put a token or key,
+	// and an audit log is the wrong place to learn that.
+	Detail string `json:"detail,omitempty"`
 }
 
 // AuditLog writes append-only JSONL entries to the audit log file.

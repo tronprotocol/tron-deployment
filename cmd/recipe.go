@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -243,6 +244,7 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		exe = os.Args[0]
 	}
+	runStart := time.Now()
 
 	// Dry-run prints its plan to Out. In json mode that is the same stream
 	// the RunResult goes to, so the plan lines land in front of the JSON
@@ -267,7 +269,41 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		StateDir:       paths.BaseDir(),
 		RequirePrivate: guard.Requested(),
 		AllowHostExec:  recipeAllowHostExec,
+		// Host steps never re-enter trond, so nothing else would record
+		// them. Detail names the step and its program — an identifier,
+		// not the argv or the script body.
+		AuditHostStep: func(step recipe.Step, sr recipe.StepResult) {
+			result, code := "success", ""
+			if sr.Error != "" {
+				result, code = "error", "HOST_STEP_ERROR"
+			}
+			writeAudit(auditEvent{
+				Command:   "recipe host-step",
+				Result:    result,
+				ErrorCode: code,
+				Detail:    step.ID + ": " + hostStepProgram(step),
+				Start:     time.Now().Add(-time.Duration(sr.DurationMs) * time.Millisecond),
+			})
+		},
 	})
+
+	// One entry for the run itself, whatever its steps did. Without it a
+	// recipe — the most capable single command trond has, now that a step
+	// can be an arbitrary host program — is the only thing that can act
+	// and leave nothing behind.
+	if res != nil {
+		result, code := "success", ""
+		if runErr != nil {
+			result, code = "error", "RECIPE_FAILED"
+		}
+		writeAudit(auditEvent{
+			Command:   "recipe run",
+			Result:    result,
+			ErrorCode: code,
+			Detail:    source,
+			Start:     runStart,
+		})
+	}
 
 	if res != nil {
 		res.Source = source
@@ -294,6 +330,16 @@ func runRecipeRun(cmd *cobra.Command, args []string) error {
 		return output.NewError("RECIPE_FAILED", exit, runErr.Error())
 	}
 	return nil
+}
+
+// hostStepProgram names what a host step executes, for the audit detail:
+// the program for a run: step, "sh" for a script: step. Never the
+// arguments or the script body — those are payload.
+func hostStepProgram(step recipe.Step) string {
+	if len(step.Run) > 0 {
+		return step.Run[0]
+	}
+	return "sh"
 }
 
 func parseParamFlags(pairs []string) (map[string]string, error) {
