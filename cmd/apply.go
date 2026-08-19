@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -233,8 +235,15 @@ func findTemplatesDir() string {
 	}
 	candidates := []string{"templates", "./templates"}
 	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			if _, err := os.Stat(c + "/private_net_config.conf"); err == nil {
+		info, err := os.Stat(c)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Any known template is enough to treat this as an override
+		// directory. Keying off one particular network would ignore a
+		// directory that only carries the other ones.
+		for _, name := range render.NetworkTemplate {
+			if _, err := os.Stat(filepath.Join(c, name)); err == nil {
 				return c
 			}
 		}
