@@ -21,7 +21,7 @@ LDFLAGS    := -s -w -X $(MODULE)/cmd.version=$(VERSION) -X $(MODULE)/cmd.commit=
 # resolves on PATH (useful in CI runners that already pinned Go via
 # actions/setup-go and want to skip the download step).
 
-GO_VERSION ?= 1.25.9
+GO_VERSION ?= 1.25.13
 
 ifeq ($(USE_SYSTEM_GO),1)
 GO         := go

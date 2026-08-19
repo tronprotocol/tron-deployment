@@ -21,7 +21,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$PROJECT_ROOT"
 
-GO_VERSION=${GO_VERSION:-1.25.9}
+GO_VERSION=${GO_VERSION:-1.25.13}
 GO_DIR=".go-toolchain/${GO_VERSION}"
 
 # Per-platform tarball + sha256. When bumping GO_VERSION, refresh the
@@ -52,10 +52,10 @@ url="https://go.dev/dl/${archive}"
 # Each line is "<sha256>  <filename>". Pulled from go.dev/dl/?mode=json
 # at the time GO_VERSION was set.
 case "${os}-${arch}" in
-    linux-amd64)  expected_sha="00859d7bd6defe8bf84d9db9e57b9a4467b2887c18cd93ae7460e713db774bc1" ;;
-    linux-arm64)  expected_sha="ec342e7389b7f489564ed5463c63b16cf8040023dabc7861256677165a8c0e2b" ;;
-    darwin-amd64) expected_sha="92cb78fba4796e218c1accb0ea0a214ef2094c382049a244ad6505505d015fbe" ;;
-    darwin-arm64) expected_sha="9528be7329b9770631a6bd09ca2f3a73ed7332bec01d87435e75e92d8f130363" ;;
+    linux-amd64)  expected_sha="39042a078ea9ceebe3ecda4a7188f0f5b96e14a071d27923ba7f40b456e85ae3" ;;
+    linux-arm64)  expected_sha="adad240fcb6bd180cf973b4b7c747baf4ec81d08b7d40ca35940ee4531971490" ;;
+    darwin-amd64) expected_sha="d742b7a53f8c8be5e02d75263883482cebabbe14ec9308cb056dd8aebeb040df" ;;
+    darwin-arm64) expected_sha="916fe61a2bc78dd516b3629ee3428b06e17141b85a70f1986c260149a3d2ffbd" ;;
     *)
         echo "bootstrap-go: no SHA256 recorded for ${os}-${arch}" >&2
         exit 1
