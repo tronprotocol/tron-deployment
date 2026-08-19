@@ -122,6 +122,10 @@ func runDiff(cmd *cobra.Command, args []string) error {
 // assignment misaligns the tail and would otherwise print the SR
 // private key into `diffs[]`.
 func simpleDiff(old, new []string) []string {
+	// Redact whole-slice: a multi-line `localwitness = [` array keeps its
+	// key on a line that does not itself start with the key name.
+	oldR := render.RedactWitnessLines(old)
+	newR := render.RedactWitnessLines(new)
 	var diffs []string
 
 	maxLen := len(old)
@@ -139,10 +143,10 @@ func simpleDiff(old, new []string) []string {
 		}
 		if oldLine != newLine {
 			if oldLine != "" {
-				diffs = append(diffs, fmt.Sprintf("- %s", render.RedactWitnessLine(oldLine)))
+				diffs = append(diffs, fmt.Sprintf("- %s", oldR[i]))
 			}
 			if newLine != "" {
-				diffs = append(diffs, fmt.Sprintf("+ %s", render.RedactWitnessLine(newLine)))
+				diffs = append(diffs, fmt.Sprintf("+ %s", newR[i]))
 			}
 		}
 	}

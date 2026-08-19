@@ -111,6 +111,11 @@ func mcpLineDiff(live, desired string, ctxLines int) []string {
 	if len(b) > maxLen {
 		maxLen = len(b)
 	}
+	// Redact whole-slice: a multi-line `localwitness = [` array keeps its
+	// key on a line that does not itself start with the key name. This
+	// output leaves the machine, so the per-line pass is not enough.
+	aR := render.RedactWitnessLines(a)
+	bR := render.RedactWitnessLines(b)
 	for i := range maxLen {
 		var aLine, bLine string
 		if i < len(a) {
@@ -129,18 +134,18 @@ func mcpLineDiff(live, desired string, ctxLines int) []string {
 			}
 			for j := lo; j < i; j++ {
 				if j < len(a) {
-					diffs = append(diffs, "  "+render.RedactWitnessLine(a[j]))
+					diffs = append(diffs, "  "+aR[j])
 				}
 			}
 		}
 		switch {
 		case i < len(a) && i >= len(b):
-			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine))
+			diffs = append(diffs, "- "+aR[i])
 		case i >= len(a) && i < len(b):
-			diffs = append(diffs, "+ "+render.RedactWitnessLine(bLine))
+			diffs = append(diffs, "+ "+bR[i])
 		default:
-			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine))
-			diffs = append(diffs, "+ "+render.RedactWitnessLine(bLine))
+			diffs = append(diffs, "- "+aR[i])
+			diffs = append(diffs, "+ "+bR[i])
 		}
 	}
 	return diffs

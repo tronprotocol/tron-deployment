@@ -200,6 +200,10 @@ func runPlan(cmd *cobra.Command, args []string) error {
 // tail and would otherwise push the SR private key straight into
 // stdout and into result["config_diff"].
 func simpleHOCONDiff(old, new []string) []string {
+	// Redact whole-slice: a multi-line `localwitness = [` array keeps its
+	// key on a line that does not itself start with the key name.
+	oldR := render.RedactWitnessLines(old)
+	newR := render.RedactWitnessLines(new)
 	var diffs []string
 	maxLen := len(old)
 	if len(new) > maxLen {
@@ -215,10 +219,10 @@ func simpleHOCONDiff(old, new []string) []string {
 		}
 		if oldLine != newLine {
 			if oldLine != "" {
-				diffs = append(diffs, "- "+render.RedactWitnessLine(oldLine))
+				diffs = append(diffs, "- "+oldR[i])
 			}
 			if newLine != "" {
-				diffs = append(diffs, "+ "+render.RedactWitnessLine(newLine))
+				diffs = append(diffs, "+ "+newR[i])
 			}
 		}
 	}

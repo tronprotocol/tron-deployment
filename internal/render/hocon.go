@@ -131,6 +131,61 @@ func RedactWitnessLine(line string) string {
 	return lineIndent(line) + redactedWitnessAssignment
 }
 
+// redactedWitnessElement stands in for a key that sits on its own line
+// inside a multi-line `localwitness = [ ... ]` array.
+const redactedWitnessElement = `"<REDACTED>"`
+
+// RedactWitnessLines redacts a whole config's worth of lines at once and
+// returns a slice of the same length, so callers can keep comparing the
+// raw lines positionally while emitting the redacted ones.
+//
+// It exists because RedactWitnessLine, looking at one line in isolation,
+// cannot see the shape the shipped templates actually use:
+//
+//	localwitness = [
+//	  <the key>
+//	]
+//
+// Only the opening line begins with the `localwitness` key, so a per-line
+// pass leaves the element line — the one that carries the key material —
+// untouched. Every surface that emits config lines (plan --diff, config
+// diff, verify-config and the MCP drift tool, whose output leaves the
+// machine) must go through this rather than mapping RedactWitnessLine
+// over the slice.
+func RedactWitnessLines(lines []string) []string {
+	out := make([]string, len(lines))
+	inArray := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case inArray:
+			// The closing bracket carries no key material; anything
+			// before it does.
+			if strings.HasPrefix(trimmed, "]") {
+				inArray = false
+				out[i] = line
+				continue
+			}
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") ||
+				strings.HasPrefix(trimmed, "//") {
+				out[i] = line
+				continue
+			}
+			out[i] = lineIndent(line) + redactedWitnessElement
+		case IsWitnessKeyLine(line):
+			out[i] = lineIndent(line) + redactedWitnessAssignment
+			// An assignment that opens an array without closing it on
+			// the same line continues on the lines that follow.
+			if !strings.Contains(trimmed, "]") {
+				inArray = true
+			}
+		default:
+			out[i] = line
+		}
+	}
+	return out
+}
+
 // RenderHOCON loads the base template for the network and applies intent-driven overrides.
 // Returns the final HOCON config as a string. templateDir may be empty, in
 // which case the embedded template is used.

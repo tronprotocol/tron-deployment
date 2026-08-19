@@ -536,3 +536,42 @@ func TestRenderHOCON_MonitoringDisabled(t *testing.T) {
 		}
 	}
 }
+
+// A localwitness array whose key sits on its own line must not survive
+// redaction: only the opening line starts with the key name, so a
+// per-line pass used to let the key itself straight through into
+// `plan --diff`, `config diff`, `verify-config` and the MCP drift tool.
+func TestRedactWitnessLinesMultiLineArray(t *testing.T) {
+	const key = "da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0"
+	in := []string{
+		"storage = {",
+		"localwitness = [",
+		"  " + key + "  # you must enable this value",
+		"]",
+		"block = {",
+	}
+	got := RedactWitnessLines(in)
+	if len(got) != len(in) {
+		t.Fatalf("length changed: got %d want %d", len(got), len(in))
+	}
+	for i, line := range got {
+		if strings.Contains(line, key) {
+			t.Errorf("line %d leaked the witness key: %q", i, line)
+		}
+	}
+	if got[0] != in[0] || got[4] != in[4] {
+		t.Errorf("unrelated lines were rewritten: %q %q", got[0], got[4])
+	}
+	if got[3] != "]" {
+		t.Errorf("closing bracket rewritten: %q", got[3])
+	}
+}
+
+// The single-line form keeps behaving exactly as before.
+func TestRedactWitnessLinesSingleLine(t *testing.T) {
+	in := []string{`localwitness = ["deadbeef"]`}
+	got := RedactWitnessLines(in)
+	if strings.Contains(got[0], "deadbeef") {
+		t.Fatalf("single-line key leaked: %q", got[0])
+	}
+}

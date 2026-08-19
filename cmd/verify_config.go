@@ -166,6 +166,10 @@ func readLiveConfig(ctx context.Context, nc *nodeContext, name string) (string, 
 func lineDiff(live, desired string, contextLines int) []string {
 	a := strings.Split(strings.TrimRight(live, "\n"), "\n")
 	b := strings.Split(strings.TrimRight(desired, "\n"), "\n")
+	// Redact whole-slice: a multi-line `localwitness = [` array keeps its
+	// key on a line that does not itself start with the key name.
+	aR := render.RedactWitnessLines(a)
+	bR := render.RedactWitnessLines(b)
 	var diffs []string
 	max := len(a)
 	if len(b) > max {
@@ -192,17 +196,17 @@ func lineDiff(live, desired string, contextLines int) []string {
 			}
 			for j := lo; j < i; j++ {
 				if j < len(a) {
-					diffs = append(diffs, "  "+render.RedactWitnessLine(a[j]))
+					diffs = append(diffs, "  "+aR[j])
 				}
 			}
 		}
 		switch {
 		case i < len(a) && i >= len(b):
-			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine))
+			diffs = append(diffs, "- "+aR[i])
 		case i >= len(a) && i < len(b):
-			diffs = append(diffs, "+ "+render.RedactWitnessLine(bLine))
+			diffs = append(diffs, "+ "+bR[i])
 		default:
-			diffs = append(diffs, "- "+render.RedactWitnessLine(aLine), "+ "+render.RedactWitnessLine(bLine))
+			diffs = append(diffs, "- "+aR[i], "+ "+bR[i])
 		}
 	}
 	return diffs
