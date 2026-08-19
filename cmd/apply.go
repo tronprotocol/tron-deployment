@@ -234,7 +234,7 @@ func findTemplatesDir() string {
 	candidates := []string{"templates", "./templates"}
 	for _, c := range candidates {
 		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			if _, err := os.Stat(c + "/main_net_config.conf"); err == nil {
+			if _, err := os.Stat(c + "/private_net_config.conf"); err == nil {
 				return c
 			}
 		}

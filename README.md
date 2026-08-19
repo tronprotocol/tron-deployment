@@ -3,15 +3,15 @@
 A command-line tool for deploying, managing, and diagnosing [java-tron](https://github.com/tronprotocol/java-tron) nodes using declarative intent files.
 
 > **Heads-up for prior users of this repository.** Until recently this repo
-> shipped only the three java-tron HOCON templates (`main_net_config.conf`,
-> `test_net_config.conf`, `private_net_config.conf`) for users to copy and
-> edit by hand. Those files are **still here, still authoritative, still
-> synchronised with upstream** (see [Configuration Templates](#configuration-templates)
-> below). What's new is `trond`, a CLI that consumes those same templates
-> and a small declarative `intent.yaml` to render, deploy, and manage nodes
-> end-to-end. If you only need the raw `.conf` files, nothing has changed —
-> they live where they always did. If you want to skip hand-editing them,
-> read on.
+> shipped three java-tron HOCON templates (`main_net_config.conf`,
+> `test_net_config.conf`, `private_net_config.conf`) at its root for users to
+> copy and edit by hand. The mainnet and Nile templates are **no longer
+> mirrored here** — take them from the upstream repositories that own them
+> (see [Configuration Templates](#configuration-templates) below), while
+> `private_net_config.conf` is still maintained in this repo. What's new is
+> `trond`, a CLI that consumes those same templates and a small declarative
+> `intent.yaml` to render, deploy, and manage nodes end-to-end. If you want
+> to skip hand-editing configs, read on.
 
 ## Features
 
@@ -657,7 +657,7 @@ deterministically; `trond apply` deploys it.
 
 | Workflow | Before | Now (optional) |
 |---|---|---|
-| Get a template | `git clone` + open `main_net_config.conf` | `trond config render <intent.yaml>` |
+| Get a template | Download the upstream `config.conf` and edit it | `trond config render <intent.yaml>` |
 | Tweak ports / features | Edit the `.conf` directly | Set `ports:` / `features:` in intent |
 | Apply changes to a node | scp + restart by hand | `trond apply --intent <file>` (idempotent) |
 | Multi-node private network | Repeat the above N times | `trond network create --intent <file>` |
@@ -665,16 +665,15 @@ deterministically; `trond apply` deploys it.
 
 Both flows coexist:
 
-- **Pure template users** can still `cat main_net_config.conf` or `git pull`
-  this repo for the latest mainnet config, ignore `bin/`, and never touch
-  the CLI.
+- **Pure template users** can still fetch the mainnet config straight from
+  [java-tron](https://github.com/tronprotocol/java-tron/blob/develop/framework/src/main/resources/config.conf),
+  ignore `bin/`, and never touch the CLI.
 - **CLI users** never need to edit the `.conf` files directly — `trond`
   handles rendering, ports, validation, and lifecycle.
 
-The CLI lives under `cmd/` and `internal/`. The original config files
-remain at the repo root. `make sync-templates` re-fetches them from
-upstream into both the root and the CLI's embedded copy so the two stay
-in lockstep.
+The CLI lives under `cmd/` and `internal/`. The templates the CLI renders
+from are embedded in the binary under `internal/render/templates/`;
+`make sync-templates` refreshes the mainnet and Nile copies from upstream.
 
 ## Companion Tools
 
@@ -698,11 +697,13 @@ in releases, alongside the main `trond` tarball.
 
 ## Configuration Templates
 
-Base java-tron configuration templates rendered into per-node HOCON. The
-mainnet and Nile templates track upstream — periodically refresh from the
+Base java-tron configuration templates rendered into per-node HOCON. They
+live in `internal/render/templates/` and are embedded into the `trond`
+binary. The mainnet and Nile templates track upstream and are **not**
+mirrored at the repo root — periodically refresh them from the
 authoritative sources before tagging a release:
 
-| File | Network | Upstream source of truth |
+| Template | Network | Upstream source of truth |
 |---|---|---|
 | `main_net_config.conf` | Mainnet | https://github.com/tronprotocol/java-tron/blob/develop/framework/src/main/resources/config.conf |
 | `test_net_config.conf` | Nile testnet | https://github.com/tron-nile-testnet/nile-testnet/blob/master/framework/src/main/resources/config-nile.conf |
