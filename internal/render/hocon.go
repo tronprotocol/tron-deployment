@@ -16,6 +16,9 @@ import (
 )
 
 // NetworkTemplate maps network names to their base config template file.
+// The files live in internal/render/templates and are embedded into the
+// binary — the repository root no longer carries mainnet or Nile copies.
+// Both track upstream and are refreshed by `make sync-templates`.
 var NetworkTemplate = map[string]string{
 	"mainnet": "main_net_config.conf",
 	"nile":    "test_net_config.conf",

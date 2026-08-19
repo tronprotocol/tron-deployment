@@ -657,7 +657,7 @@ deterministically; `trond apply` deploys it.
 
 | Workflow | Before | Now (optional) |
 |---|---|---|
-| Get a template | Download the upstream `config.conf` and edit it | `trond config render <intent.yaml>` |
+| Get a template | `git clone` + open `main_net_config.conf` | `trond config render <intent.yaml>` |
 | Tweak ports / features | Edit the `.conf` directly | Set `ports:` / `features:` in intent |
 | Apply changes to a node | scp + restart by hand | `trond apply --intent <file>` (idempotent) |
 | Multi-node private network | Repeat the above N times | `trond network create --intent <file>` |
