@@ -5,7 +5,7 @@ through it with `txgen`, and assert the receivers hold exactly what was sent.
 
 ```bash
 npm install                                  # once — tronweb, for signing
-export SR_PRIVATE_KEY=da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0
+export SR_PRIVATE_KEY=a31d54825aea2fc5127e3bd435fc2346021313005e5f304ab33372432784acae
 
 trond recipe run --file examples/token-lab/trc20.yaml --allow-host-exec \
   --param lab_dir=examples/token-lab --param sender_key=$SR_PRIVATE_KEY

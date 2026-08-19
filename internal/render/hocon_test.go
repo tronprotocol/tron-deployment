@@ -542,7 +542,7 @@ func TestRenderHOCON_MonitoringDisabled(t *testing.T) {
 // per-line pass used to let the key itself straight through into
 // `plan --diff`, `config diff`, `verify-config` and the MCP drift tool.
 func TestRedactWitnessLinesMultiLineArray(t *testing.T) {
-	const key = "da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0"
+	const key = "a31d54825aea2fc5127e3bd435fc2346021313005e5f304ab33372432784acae"
 	in := []string{
 		"storage = {",
 		"localwitness = [",

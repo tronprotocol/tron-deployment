@@ -176,7 +176,7 @@ Driver script:
 
 ```bash
 docker network create tron-pn-mesh
-SR_KEY=da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0 \
+SR_KEY=a31d54825aea2fc5127e3bd435fc2346021313005e5f304ab33372432784acae \
   trond --state-dir /tmp/trond-$JOB \
   network create --intent pn.yaml -o json
 ```
@@ -191,8 +191,8 @@ docker run --rm -v pn-node1_pn-node1-logs:/L alpine \
 ```
 
 The default private-net witness private key
-(`da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0`) matches
-the genesis address `TPL66VK2gCXNCD7EJg9pgJRfqcRazjhUZY` baked into the
+(`a31d54825aea2fc5127e3bd435fc2346021313005e5f304ab33372432784acae`) matches
+the genesis address `TM4yToQ1njkcFwi3ADY5x6dbdfNekU3rVi` baked into the
 `private_net_config.conf` template. Use that exact key unless you also
 supply a fresh genesis block.
 

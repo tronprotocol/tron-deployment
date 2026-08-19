@@ -138,7 +138,7 @@ func TestRendered_NoSecret_FormsAreIdentical(t *testing.T) {
 			Type: "witness",
 			WitnessKey: &intent.WitnessKey{
 				KeystorePath:   "/opt/tron/keystore.json",
-				AccountAddress: "TPL66VK2gCXNCD7EJg9pgJRfqcRazjhUZY",
+				AccountAddress: "TM4yToQ1njkcFwi3ADY5x6dbdfNekU3rVi",
 			},
 		},
 		"witness-no-key": {Type: "witness"},
@@ -229,7 +229,7 @@ func TestIsWitnessKeyLine_ExactKeyMatch(t *testing.T) {
 	noMatch := []string{
 		`localwitnesskeystore = ["/opt/tron/keystore.json"]`,
 		`#localwitnesskeystore = [`,
-		`localWitnessAccountAddress = "TPL66VK2gCXNCD7EJg9pgJRfqcRazjhUZY"`,
+		`localWitnessAccountAddress = "TM4yToQ1njkcFwi3ADY5x6dbdfNekU3rVi"`,
 		`# and the localwitness is configured with the private key`,
 		`// When it is empty,the localwitness is configured with the private key`,
 		`# localWitnessAccountAddress =`,

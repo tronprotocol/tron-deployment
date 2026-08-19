@@ -394,7 +394,7 @@ trond preflight --intent my-net.yaml -o json
 
 # 4. Create the whole network in one shot. trond auto-wires
 #    node.active between siblings so peering works under auto_ports.
-SR_KEY=da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0 \
+SR_KEY=a31d54825aea2fc5127e3bd435fc2346021313005e5f304ab33372432784acae \
   trond network create --intent my-net.yaml --wait -o json
 # Output: {"network":"pn", "nodes":[{"name":"pn-node0", "endpoints":{...}}, ...]}
 
