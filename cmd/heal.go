@@ -102,7 +102,7 @@ func runAutoHeal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	nc, err := resolveNodeContext(name)
+	nc, err := resolveNodeContextForWrite(name)
 	if err != nil {
 		return err
 	}

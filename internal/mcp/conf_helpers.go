@@ -3,7 +3,9 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -26,4 +28,17 @@ func readLiveConfigForMCP(ctx context.Context, tgt target.Target, node *state.Ma
 		return "", fmt.Errorf("docker exec cat: %w", err)
 	}
 	return string(out), nil
+}
+
+// redactConfText removes witness signing keys from a whole conf before
+// it is handed out. Split/join around render.RedactWitnessLines, which
+// finds the key values by parsing rather than by line shape, so the
+// formatting of the node's live conf does not matter.
+func redactConfText(conf string) string {
+	if conf == "" {
+		return conf
+	}
+	// Splitting on \n and rejoining preserves \r\n line endings, since
+	// the \r stays attached to the line content.
+	return strings.Join(render.RedactWitnessLines(strings.Split(conf, "\n")), "\n")
 }

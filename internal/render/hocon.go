@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gurkankaymak/hocon"
+
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/security"
 )
@@ -135,12 +137,16 @@ func RedactWitnessLine(line string) string {
 // inside a multi-line `localwitness = [ ... ]` array.
 const redactedWitnessElement = `"<REDACTED>"`
 
+// redactedValue stands in for a key value replaced in place, where the
+// surrounding quoting and punctuation of the original line is kept.
+const redactedValue = "<REDACTED>"
+
 // RedactWitnessLines redacts a whole config's worth of lines at once and
 // returns a slice of the same length, so callers can keep comparing the
 // raw lines positionally while emitting the redacted ones.
 //
 // It exists because RedactWitnessLine, looking at one line in isolation,
-// cannot see the shape the shipped templates actually use:
+// cannot see the shape the shipped templates use:
 //
 //	localwitness = [
 //	  <the key>
@@ -152,26 +158,99 @@ const redactedWitnessElement = `"<REDACTED>"`
 // diff, verify-config and the MCP drift tool, whose output leaves the
 // machine) must go through this rather than mapping RedactWitnessLine
 // over the slice.
+//
+// The key values are found by parsing the config rather than by reading
+// line shapes, so the formatting does not matter: single-line,
+// multi-line, a `]` inside a comment on the opening line, an element
+// that closes the array on its own line. A scan over line shapes gets
+// each of those wrong, and for redaction the failure is silent — the
+// caller cannot tell a config with no key from one whose key slipped
+// through. When the text does not parse (a partial read off a node, a
+// file mid-write) it falls back to the scan, which is why the scan is
+// hardened rather than deleted.
 func RedactWitnessLines(lines []string) []string {
+	if values := witnessKeyValues(strings.Join(lines, "\n")); len(values) > 0 {
+		out := make([]string, len(lines))
+		for i, line := range lines {
+			out[i] = redactValues(line, values)
+		}
+		return out
+	}
+	return redactWitnessLinesByScan(lines)
+}
+
+// witnessKeyValues parses raw and returns the literal strings assigned to
+// `localwitness`. Nil when the text does not parse or carries no key —
+// the caller falls back to the scan, which cannot tell those two apart
+// either but at least does not claim to.
+func witnessKeyValues(raw string) []string {
+	cfg, err := hocon.ParseString(raw)
+	if err != nil || cfg == nil {
+		return nil
+	}
+
+	// A parse error is reported through err, but this library also
+	// panics on some malformed input; a redaction path must not take
+	// the process down with it.
+	var values []string
+	func() {
+		defer func() { _ = recover() }()
+		for _, v := range cfg.GetArray(witnessKeyName) {
+			if v == nil {
+				continue
+			}
+			// String() quotes string values; the raw text may or may
+			// not have them, so match against both.
+			s := strings.TrimSpace(v.String())
+			unquoted := strings.Trim(s, `"`)
+			if unquoted == "" {
+				continue
+			}
+			values = append(values, unquoted)
+		}
+	}()
+	return values
+}
+
+// redactValues replaces every occurrence of a key value in line. Longest
+// first, so one value being a prefix of another cannot leave a tail
+// behind.
+func redactValues(line string, values []string) string {
+	out := line
+	sorted := slices.Clone(values)
+	slices.SortFunc(sorted, func(a, b string) int { return len(b) - len(a) })
+	for _, v := range sorted {
+		out = strings.ReplaceAll(out, v, redactedValue)
+	}
+	return out
+}
+
+// redactWitnessLinesByScan is the fallback for text that does not parse.
+// It walks the lines and stays inside an unterminated localwitness
+// array. Comments are stripped before the bracket checks: a `]` inside a
+// comment on the opening line would otherwise end the array before it
+// began, and let the key through.
+func redactWitnessLinesByScan(lines []string) []string {
 	out := make([]string, len(lines))
 	inArray := false
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
+		trimmed := stripComment(strings.TrimSpace(line))
 		switch {
 		case inArray:
-			// The closing bracket carries no key material; anything
-			// before it does.
 			if strings.HasPrefix(trimmed, "]") {
 				inArray = false
 				out[i] = line
 				continue
 			}
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") ||
-				strings.HasPrefix(trimmed, "//") {
+			if trimmed == "" {
 				out[i] = line
 				continue
 			}
 			out[i] = lineIndent(line) + redactedWitnessElement
+			// An element may close the array on its own line.
+			if strings.HasSuffix(trimmed, "]") {
+				inArray = false
+			}
 		case IsWitnessKeyLine(line):
 			out[i] = lineIndent(line) + redactedWitnessAssignment
 			// An assignment that opens an array without closing it on
@@ -184,6 +263,18 @@ func RedactWitnessLines(lines []string) []string {
 		}
 	}
 	return out
+}
+
+// stripComment removes a trailing HOCON comment so a `]` or `[` inside
+// it cannot steer the bracket tracking. HOCON accepts both # and //.
+func stripComment(s string) string {
+	if i := strings.Index(s, "#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "//"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 // RenderHOCON loads the base template for the network and applies intent-driven overrides.

@@ -1,6 +1,7 @@
 package render
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -573,5 +574,78 @@ func TestRedactWitnessLinesSingleLine(t *testing.T) {
 	got := RedactWitnessLines(in)
 	if strings.Contains(got[0], "deadbeef") {
 		t.Fatalf("single-line key leaked: %q", got[0])
+	}
+}
+
+// Redaction must not depend on line shape. These are the shapes a scan
+// over brackets gets wrong: a `]` inside the comment on the opening
+// line ends the array before it began, and an element that closes the
+// array leaves the scanner inside it for the rest of the file.
+func TestRedactWitnessLinesIgnoresLineShape(t *testing.T) {
+	const key = "da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0"
+
+	cases := map[string][]string{
+		"comment carries a closing bracket": {
+			`localwitness = [ # note the ] in this comment`,
+			`  ` + key,
+			`]`,
+			`block = {`,
+		},
+		"element closes the array": {
+			`localwitness = [`,
+			`  ` + key + `]`,
+			`node.p2p.version = 11111`,
+		},
+		"single line": {`localwitness = ["` + key + `"]`},
+		"multi line":  {`localwitness = [`, `  ` + key + `  # matched`, `]`},
+	}
+
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := RedactWitnessLines(in)
+			if len(got) != len(in) {
+				t.Fatalf("length changed: got %d want %d", len(got), len(in))
+			}
+			for i, line := range got {
+				if strings.Contains(line, key) {
+					t.Errorf("line %d leaked the key: %q", i, line)
+				}
+			}
+		})
+	}
+}
+
+// Over-redaction is its own failure: a diff whose unrelated lines all
+// read <REDACTED> tells the reader nothing.
+func TestRedactWitnessLinesLeavesOtherKeysAlone(t *testing.T) {
+	const key = "da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0"
+	in := []string{
+		`localwitness = [`,
+		`  ` + key + `]`,
+		`node.p2p.version = 11111`,
+		`storage.db.directory = "database"`,
+	}
+	got := RedactWitnessLines(in)
+	for _, want := range []string{`node.p2p.version = 11111`, `storage.db.directory = "database"`} {
+		if !slices.Contains(got, want) {
+			t.Errorf("unrelated line was rewritten; wanted %q in %q", want, got)
+		}
+	}
+}
+
+// Text that does not parse still has to be redacted — that is the whole
+// point of keeping the scan.
+func TestRedactWitnessLinesFallsBackOnUnparseableText(t *testing.T) {
+	const key = "da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0"
+	in := []string{
+		`this { is not : valid ] hocon [`,
+		`localwitness = [`,
+		`  ` + key,
+		`]`,
+	}
+	for i, line := range RedactWitnessLines(in) {
+		if strings.Contains(line, key) {
+			t.Errorf("line %d leaked the key on the fallback path: %q", i, line)
+		}
 	}
 }

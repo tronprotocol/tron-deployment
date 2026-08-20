@@ -77,7 +77,18 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		if len(parsed.Nodes) > 0 && parsed.Nodes[0].SystemUser != "" {
 			user = parsed.Nodes[0].SystemUser
 		}
-		tgt.Exec(ctx, "useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", user)
+		// Until provisioning mode existed this call was refused by the
+		// SSH whitelist and failed on every remote target, so discarding
+		// the error was invisible. Now that it runs, a real failure —
+		// no permission, a conflicting uid, no /usr/sbin/nologin — would
+		// otherwise be reported as a created user.
+		if out, err := tgt.Exec(ctx, "useradd", "--system", "--no-create-home",
+			"--shell", "/usr/sbin/nologin", user); err != nil {
+			if !userAlreadyExists(out) {
+				return exitWithError("BOOTSTRAP_ERROR", output.ExitGeneralError,
+					fmt.Sprintf("Failed to create system user %q: %v: %s", user, err, strings.TrimSpace(string(out))))
+			}
+		}
 		installed = append(installed, "user:"+user)
 	}
 
@@ -137,4 +148,17 @@ func installJDK(ctx context.Context, tgt target.Target) error {
 	}
 
 	return fmt.Errorf("unsupported package manager; install JDK 17 manually")
+}
+
+// userAlreadyExists reports whether a useradd failure was only the user
+// being there already, which bootstrap has to tolerate: it is expected
+// to be re-runnable, and the second run finds the user from the first.
+//
+// useradd exits 9 for "name already in use", but the exit status does
+// not survive target.Exec's error, so the message is what is left to
+// match on. Both util-linux and busybox wording are covered.
+func userAlreadyExists(out []byte) bool {
+	msg := strings.ToLower(string(out))
+	return strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "already in use")
 }

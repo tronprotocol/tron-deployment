@@ -29,7 +29,7 @@ func runRollback(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	nc, err := resolveNodeContext(name)
+	nc, err := resolveNodeContextForWrite(name)
 	if err != nil {
 		return err
 	}

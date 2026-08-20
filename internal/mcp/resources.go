@@ -186,11 +186,18 @@ func readNodeConfResource(ctx context.Context, req *mcp.ReadResourceRequest) (*m
 	if err != nil {
 		return nil, err
 	}
+	// This resource hands the whole conf to the MCP client, and from
+	// there to a model provider — it is the one surface whose full text
+	// leaves the machine by design. A witness node's conf carries its
+	// signing key, so redact before it goes out. The drift tool reads
+	// the same helper and keeps the raw text, because it compares
+	// against a rendered config and a redacted side would report every
+	// witness node as drifted.
 	return &mcp.ReadResourceResult{
 		Contents: []*mcp.ResourceContents{{
 			URI:      req.Params.URI,
 			MIMEType: "text/plain",
-			Text:     live,
+			Text:     redactConfText(live),
 		}},
 	}, nil
 }
