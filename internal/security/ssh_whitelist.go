@@ -61,6 +61,32 @@ func ValidateCommand(cmd string) error {
 	return nil
 }
 
+// provisioningCommands are allowed on top of allowedCommands, and only for a
+// target that has been put in provisioning mode. `trond bootstrap` is the one
+// caller that does so, which is the scoping the comment on allowedCommands
+// asks for: these names install packages and run the vendor's Docker
+// installer, so they must not be reachable from `trond exec` or from any
+// lifecycle path driven by intent fields.
+var provisioningCommands = map[string]bool{
+	"apt-get": true,
+	"yum":     true,
+	"useradd": true,
+	// The Docker convenience script is delivered by a pipeline, so bootstrap
+	// hands it to a shell. Nothing outside bootstrap may do this.
+	"sh": true,
+}
+
+// ValidateProvisioningCommand accepts the ordinary whitelist plus the
+// package-manager and shell commands bootstrap needs.
+func ValidateProvisioningCommand(cmd string) error {
+	base := extractBaseCommand(cmd)
+	if allowedCommands[base] || provisioningCommands[base] {
+		return nil
+	}
+	return fmt.Errorf("command %q is allowed neither by the SSH whitelist nor in provisioning mode; allowed commands: %s",
+		base, allowedCommandList())
+}
+
 // extractBaseCommand gets the first word (the command name) from a command string.
 func extractBaseCommand(cmd string) string {
 	// Handle sudo prefix

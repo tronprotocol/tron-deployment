@@ -41,6 +41,13 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	if closer, ok := tgt.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
+	// Host preparation installs packages, which the ordinary SSH whitelist
+	// does not allow — deliberately, so that no lifecycle path or `trond
+	// exec` can. bootstrap is the one command that may, and only for the
+	// lifetime of this target.
+	if p, ok := tgt.(interface{ SetProvisioning(bool) }); ok {
+		p.SetProvisioning(true)
+	}
 
 	runtimeType := parsed.Target.Runtime
 	if runtimeType == "" {
