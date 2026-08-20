@@ -69,10 +69,27 @@ func (s *Store) Save(state *DeploymentState) error {
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	// Atomic write: write to temp file then rename
-	tmpPath := s.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+	// Atomic write: write to a temp file then rename. The temp name is
+	// unique per call — a fixed ".tmp" is shared by concurrent writers,
+	// which then overwrite each other's half-written file and rename
+	// whatever is left, so the rename stops being atomic in practice.
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("create state temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("write state temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close state temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod state temp file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, s.path); err != nil {

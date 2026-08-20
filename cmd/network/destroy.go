@@ -39,6 +39,15 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 			WithSuggestions("Add --confirm <network-name> to proceed")
 	}
 
+	// Hold the state lock across the whole load-modify-save cycle: this
+	// command reads the node list here and writes it back much later, and
+	// a concurrent trond would otherwise drop one of the two updates.
+	lock := state.NewLock(paths.BaseDir())
+	if err := lock.Acquire(); err != nil {
+		return output.NewError("LOCK_ERROR", output.ExitGeneralError, "acquire state lock: "+err.Error())
+	}
+	defer lock.Release()
+
 	store, err := state.NewStore(paths.State())
 	if err != nil {
 		return err

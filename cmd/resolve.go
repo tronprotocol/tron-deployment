@@ -22,12 +22,23 @@ type nodeContext struct {
 	Node    *state.ManagedNode
 	Target  target.Target
 	Runtime runtime.Runtime
+
+	// lock is held for the whole load-modify-save cycle. Every command
+	// built on a nodeContext reads state here and writes it back through
+	// SaveState, sometimes many seconds later, so the read and the write
+	// have to sit inside one lock or a concurrent trond drops one of the
+	// two updates.
+	lock *state.Lock
 }
 
-// Close releases resources (e.g., SSH connections).
+// Close releases the state lock and any resources (e.g., SSH connections).
 func (nc *nodeContext) Close() {
 	if closer, ok := nc.Target.(interface{ Close() error }); ok {
 		closer.Close()
+	}
+	if nc.lock != nil {
+		nc.lock.Release()
+		nc.lock = nil
 	}
 }
 
@@ -111,13 +122,27 @@ func resolveNodeContext(name string) (*nodeContext, error) {
 		return nil, err
 	}
 
+	// Take the lock before the read: the caller writes the same state back
+	// through SaveState once its operation finishes.
+	lock := state.NewLock(stateDir())
+	if err := lock.Acquire(); err != nil {
+		return nil, exitWithError("LOCK_ERROR", output.ExitGeneralError,
+			"Failed to acquire state lock: "+err.Error(),
+			"Check if another trond process is running")
+	}
+	release := func() {
+		lock.Release()
+	}
+
 	deployState, err := store.Load()
 	if err != nil {
+		release()
 		return nil, err
 	}
 
 	node := store.GetNode(deployState, name)
 	if node == nil {
+		release()
 		return nil, exitWithError("NODE_NOT_FOUND", output.ExitGeneralError,
 			fmt.Sprintf("Node %q not found in state", name),
 			"Run: trond list",
@@ -126,6 +151,7 @@ func resolveNodeContext(name string) (*nodeContext, error) {
 
 	tgt, err := resolveTargetFromNode(node)
 	if err != nil {
+		release()
 		return nil, exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
 	}
 
@@ -137,6 +163,7 @@ func resolveNodeContext(name string) (*nodeContext, error) {
 		Node:    node,
 		Target:  tgt,
 		Runtime: rt,
+		lock:    lock,
 	}, nil
 }
 

@@ -42,6 +42,15 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 		return errResult(fmt.Errorf("name is required"))
 	}
 
+	// Hold the state lock across the load-modify-save cycle, the same way
+	// the lifecycle tool does — heal writes the node list back after the
+	// repair runs.
+	lock := state.NewLock(paths.BaseDir())
+	if err := lock.Acquire(); err != nil {
+		return errResult(fmt.Errorf("acquire state lock: %w", err))
+	}
+	defer lock.Release()
+
 	store, err := state.NewStore(paths.State())
 	if err != nil {
 		return errResult(err)
