@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 func TestGenerateFalconKeypair(t *testing.T) {
@@ -30,8 +32,8 @@ func TestGenerateFalconKeypair(t *testing.T) {
 		t.Errorf("h polynomial len = %d, want %d", len(hPoly), falconHLen)
 	}
 
-	if len(kp.HexAddress) != AddressHexLen {
-		t.Errorf("hex addr len = %d, want %d", len(kp.HexAddress), AddressHexLen)
+	if len(kp.HexAddress) != tronaddr.AddressHexLen {
+		t.Errorf("hex addr len = %d, want %d", len(kp.HexAddress), tronaddr.AddressHexLen)
 	}
 	if !strings.HasPrefix(kp.HexAddress, "41") {
 		t.Errorf("hex addr missing 0x41 prefix: %s", kp.HexAddress)

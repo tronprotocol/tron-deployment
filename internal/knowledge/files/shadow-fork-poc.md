@@ -16,8 +16,8 @@ this doc explains what each step does + how to verify success.
 - Docker + docker-compose running
 - ~30 GB free disk (lite Nile snapshot is ~10-20 GB; extraction +
   scratch overhead)
-- Python 3 with `tronpy` for the witness keypair generation:
-  `pip install tronpy`
+- Nothing else: the witness keypair comes from `trond shadow-fork
+  keygen`, which the script calls for you.
   - OR provide your own via `SHADOW_FORK_WITNESS_KEY` (hex private
     key) and `SHADOW_FORK_WITNESS_ADDRESS` (Base58Check TRON
     address) env vars.
@@ -51,7 +51,8 @@ Or run the four phases individually for inspection:
    download --network nile --type lite --to ./shadow-fork-data`.
    Idempotent — re-runs detect the existing `output-directory/`
    and skip.
-2. Generates a fresh secp256k1 witness keypair via `tronpy`,
+2. Generates a fresh secp256k1 witness keypair via
+   `trond shadow-fork keygen`,
    stashing it in `.shadow-fork-witness.env` (gitignored). The
    address is what fork.conf installs as the active witness; the
    private key is what the trond intent's witness_key resolves

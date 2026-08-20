@@ -93,6 +93,7 @@ var DefaultSchemaLookup = map[string]string{
 	"trond recipe list":        "recipe-list",
 	"trond recipe show":        "recipe-show",
 	"trond recipe run":         "recipe-run",
+	"trond shadow-fork keygen": "shadow-fork-keygen",
 	"trond shadow-fork mutate": "shadow-fork-mutate",
 }
 

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.15.0",
+  "schema_version": "1.16.0",
   "entries": [
     {
       "name": "apply",
@@ -96,6 +96,10 @@
     {
       "name": "recipe-validate",
       "hash": "fd7205de5915bdef541e2da867a2eb6ea8c50d1d551a42a0882c11bbf3d96d4f"
+    },
+    {
+      "name": "shadow-fork-keygen",
+      "hash": "141892d395c522bd8ccbd73be11fb3926c5147b4bc8202a6a2c08c5851eab3b3"
     },
     {
       "name": "shadow-fork-mutate",

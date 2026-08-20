@@ -15,6 +15,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 	tronpb "github.com/tronprotocol/tron-deployment/internal/tronproto/pb"
 )
 
@@ -80,8 +81,8 @@ func (c *NodeClient) CreateTRC10Transfer(ctx context.Context, fromHex, toHex, as
 func (c *NodeClient) CreateTRC20Transfer(ctx context.Context, fromHex, contractHex, toHex string, amount int64, feeLimit int64) (*UnsignedTx, error) {
 	// transfer(address,uint256) selector = 0xa9059cbb
 	// recipient: 32-byte left-padded (drop 0x41 prefix → 20 bytes → pad to 32)
-	if len(toHex) != AddressHexLen {
-		return nil, fmt.Errorf("to address must be %d hex chars", AddressHexLen)
+	if len(toHex) != tronaddr.AddressHexLen {
+		return nil, fmt.Errorf("to address must be %d hex chars", tronaddr.AddressHexLen)
 	}
 	recipient20, err := hex.DecodeString(toHex[2:]) // strip 0x41
 	if err != nil {

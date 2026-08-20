@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/shadow-fork-keygen.schema.json",
+  "title": "trond shadow-fork keygen output",
+  "description": "Returned by `trond shadow-fork keygen -o json`. The shape depends on --out: without it the caller asked for the key on stdout and gets it, with it the key went to a 0600 file and only the address is echoed, so that a transcript or a log never carries the private key the caller deliberately wrote to disk.",
+  "type": "object",
+  "required": [
+    "address",
+    "hex_address"
+  ],
+  "properties": {
+    "private_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The secp256k1 private key, 32 bytes hex. Present only when --out was NOT given. It signs blocks on the shadow-fork chain and nothing else, but it is a real key: do not persist it anywhere the fork's data directory is not already protected."
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^T[1-9A-HJ-NP-Za-km-z]{33}$",
+      "description": "Base58Check address derived from the key. This is what goes into fork.conf as the witness address; java-tron will refuse to produce blocks if it disagrees with the key the node signs with."
+    },
+    "hex_address": {
+      "type": "string",
+      "pattern": "^41[0-9a-f]{40}$",
+      "description": "The same address in the 21-byte hex wire form (0x41 prefix + 20-byte body)."
+    },
+    "out": {
+      "type": "string",
+      "description": "Path the shell exports were written to, present only when --out was given. The file is mode 0600 and holds SHADOW_FORK_WITNESS_KEY and SHADOW_FORK_WITNESS_ADDRESS."
+    }
+  },
+  "additionalProperties": false
+}

@@ -92,6 +92,7 @@ func TestSchemaCoverage(t *testing.T) {
 		"trond preflight":          "preflight",
 		"trond recipe list":        "recipe-list",
 		"trond recipe show":        "recipe-show",
+		"trond shadow-fork keygen": "shadow-fork-keygen",
 		"trond shadow-fork mutate": "shadow-fork-mutate",
 		"trond snapshot download":  "snapshot-download",
 		"trond snapshot clone":     "snapshot-clone",

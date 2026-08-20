@@ -473,7 +473,7 @@ trond status <node> -o json
 
 See `knowledge/shadow-fork-poc.md` + `examples/shadow-fork/` for
 the full walkthrough including the witness-keypair generation step
-(tronpy) + the canonical fork.conf template. `scripts/poc-shadow-fork.sh`
+(via `trond shadow-fork keygen`) + the canonical fork.conf template. `scripts/poc-shadow-fork.sh`
 orchestrates the whole flow.
 
 ### Key invariants

@@ -24,9 +24,9 @@
 #     but the SR confirmation count stays at 1, well below the 19/27
 #     threshold). Sufficient for "did the shadow-fork mutation work"
 #     proof; not for testing finality-dependent code paths.
-#   - Witness key generation requires `tronpy` (`pip install tronpy`)
-#     OR the operator providing their own via SHADOW_FORK_WITNESS_KEY
-#     + SHADOW_FORK_WITNESS_ADDRESS env vars.
+#   - The witness keypair comes from `trond shadow-fork keygen`, or
+#     from the operator via the SHADOW_FORK_WITNESS_KEY and
+#     SHADOW_FORK_WITNESS_ADDRESS env vars.
 #
 # Usage:
 #   ./scripts/poc-shadow-fork.sh setup
@@ -77,10 +77,9 @@ init_key_stash() {
 
 generate_witness_key() {
   # Generate a fresh secp256k1 keypair + derive the TRON Base58Check
-  # address. We don't have a Go subcommand for this (out of trond's
-  # scope), so we shell out to Python's tronpy — well-maintained,
-  # widely used, pure-Python install. The script can ALSO read a
-  # caller-supplied key from env vars if they have their own.
+  # address. `trond shadow-fork keygen` does both, so this needs nothing
+  # beyond the binary the script already requires. A caller who has their
+  # own key can supply it through the env vars instead.
   if [[ -n "${SHADOW_FORK_WITNESS_KEY:-}" && -n "${SHADOW_FORK_WITNESS_ADDRESS:-}" ]]; then
     log "using caller-supplied SHADOW_FORK_WITNESS_KEY + SHADOW_FORK_WITNESS_ADDRESS"
     init_key_stash
@@ -95,26 +94,12 @@ EOF
     log "witness keypair already generated: $KEY_STASH (delete to regenerate)"
     return
   fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    err "python3 required to generate witness key — install or set SHADOW_FORK_WITNESS_KEY+ADDRESS"
-  fi
-  if ! python3 -c 'import tronpy' 2>/dev/null; then
-    err "tronpy not installed — run 'pip install tronpy' or set SHADOW_FORK_WITNESS_KEY+ADDRESS"
-  fi
-  log "generating fresh witness keypair via tronpy"
-  init_key_stash
-  python3 - <<'PY' > "$KEY_STASH"
-from tronpy.keys import PrivateKey
-k = PrivateKey.random()
-addr = k.public_key.to_base58check_address()
-print(f'export SHADOW_FORK_WITNESS_KEY="{k.hex()}"')
-print(f'export SHADOW_FORK_WITNESS_ADDRESS="{addr}"')
-PY
-  # The file holds a fresh secp256k1 private key; init_key_stash above
-  # created it 0600 so the key is never on disk world-readable, not
-  # even for the length of the write. .gitignore catches the commit
-  # path; the mode protects against shared-filesystem leaks +
-  # accidental `tar`/`zip` exposure.
+  log "generating fresh witness keypair via trond shadow-fork keygen"
+  # trond writes the file itself, 0600 from the first byte, so the key is
+  # never on disk world-readable — not even for the length of the write.
+  # .gitignore keeps the path out of commits; the mode is what protects
+  # against shared filesystems and an accidental tar/zip.
+  "$TROND_BIN" shadow-fork keygen --out "$KEY_STASH" >/dev/null
   log "stashed at $KEY_STASH (mode 0600)"
 }
 

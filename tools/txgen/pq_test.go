@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 const testSeedHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
@@ -41,8 +43,8 @@ func TestPQSignerDeterministicAddress(t *testing.T) {
 		t.Fatal("public key not deterministic")
 	}
 	// Address must be the 21-byte TRON hex form with the 0x41 prefix.
-	if len(a.HexAddress()) != AddressHexLen {
-		t.Fatalf("address hex len = %d, want %d", len(a.HexAddress()), AddressHexLen)
+	if len(a.HexAddress()) != tronaddr.AddressHexLen {
+		t.Fatalf("address hex len = %d, want %d", len(a.HexAddress()), tronaddr.AddressHexLen)
 	}
 	if !strings.HasPrefix(a.HexAddress(), "41") {
 		t.Fatalf("address missing 0x41 prefix: %s", a.HexAddress())

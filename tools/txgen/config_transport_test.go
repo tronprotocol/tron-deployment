@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 // writeConfig writes body to a temp file and loads it, returning whatever
@@ -144,7 +146,7 @@ func TestConfig_TransportRejections(t *testing.T) {
 // at broadcast.
 func TestConfig_ExpirationCeiling(t *testing.T) {
 	const gen = `"totalTxCount": 1, "privateKey": "%s", "txType": {"transfer": 100},`
-	key := strings.Repeat("a", PrivateKeyHexLen)
+	key := strings.Repeat("a", tronaddr.PrivateKeyHexLen)
 
 	t.Run("default is java-tron's own", func(t *testing.T) {
 		cfg, err := writeConfig(t, `{"generate": {`+fmt.Sprintf(gen, key)+` "expirationMillis": 0}}`)

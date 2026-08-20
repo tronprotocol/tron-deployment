@@ -10,10 +10,11 @@ import "github.com/spf13/cobra"
 
 // Cmd is the parent command attached to root by cmd/root.go.
 //
-// The umbrella surface is intentionally narrow today (only `mutate`).
-// Future subcommands would slot in here: an `init` to scaffold an
-// example fork.conf, a `validate` to dry-run the loader without
-// touching the DB, a `run` to chain mutate + private-network launch.
+// The umbrella surface is narrow: `keygen` makes the witness pair the
+// forked chain signs with, `mutate` rewrites the snapshot. Future
+// subcommands would slot in here: an `init` to scaffold an example
+// fork.conf, a `validate` to dry-run the loader without touching the
+// DB, a `run` to chain mutate + private-network launch.
 var Cmd = &cobra.Command{
 	Use:   "shadow-fork",
 	Short: "Shadow-fork testing utilities (Go port of java-tron DbFork)",
@@ -25,6 +26,7 @@ migrations without affecting mainnet.
 
 Subcommands:
 
+  trond shadow-fork keygen --out witness.env
   trond shadow-fork mutate --data-dir ./output-directory --config fork.conf
 
 Mutation is byte-equivalent with java-tron's DbFork toolkit
@@ -34,5 +36,6 @@ directly from existing java tooling.`,
 }
 
 func init() {
+	Cmd.AddCommand(keygenCmd)
 	Cmd.AddCommand(mutateCmd)
 }

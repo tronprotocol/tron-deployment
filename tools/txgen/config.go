@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 // Config is txgen's runtime configuration, loaded from a JSON file.
@@ -320,8 +322,8 @@ func (c *Config) validate() error {
 		if c.Generate.PrivateKey == "" {
 			return errors.New("generate.privateKey is required")
 		}
-		if len(c.Generate.PrivateKey) != PrivateKeyHexLen {
-			return fmt.Errorf("generate.privateKey must be %d hex chars", PrivateKeyHexLen)
+		if len(c.Generate.PrivateKey) != tronaddr.PrivateKeyHexLen {
+			return fmt.Errorf("generate.privateKey must be %d hex chars", tronaddr.PrivateKeyHexLen)
 		}
 	}
 	if tt.TransferTRC10 > 0 && c.Generate.TRC10ID == "" {

@@ -1,4 +1,4 @@
-package main
+package tronaddr
 
 import (
 	"bytes"
@@ -39,13 +39,13 @@ func AddressFromPrivateKey(privHex string) (hexAddr, base58Addr string, err erro
 	priv := secp256k1.PrivKeyFromBytes(raw)
 	pub := priv.PubKey()
 	uncompressed := pub.SerializeUncompressed() // 65 bytes, 0x04 + X(32) + Y(32)
-	addrHex, addrB58 := addressFromPubBytes(uncompressed[1:])
+	addrHex, addrB58 := AddressFromPubBytes(uncompressed[1:])
 	return addrHex, addrB58, nil
 }
 
-// addressFromPubBytes turns 64 raw pubkey bytes (X || Y) into TRON's
+// AddressFromPubBytes turns 64 raw pubkey bytes (X || Y) into TRON's
 // 21-byte address (hex) + Base58Check form.
-func addressFromPubBytes(pubXY []byte) (string, string) {
+func AddressFromPubBytes(pubXY []byte) (string, string) {
 	hasher := sha3.NewLegacyKeccak256()
 	hasher.Write(pubXY)
 	hash := hasher.Sum(nil) // 32 bytes
@@ -64,7 +64,7 @@ func NewRandomAddress() (privHex, hexAddr, base58Addr string, err error) {
 	}
 	privHex = hex.EncodeToString(priv.Serialize())
 	uncompressed := priv.PubKey().SerializeUncompressed()
-	hexAddr, base58Addr = addressFromPubBytes(uncompressed[1:])
+	hexAddr, base58Addr = AddressFromPubBytes(uncompressed[1:])
 	return privHex, hexAddr, base58Addr, nil
 }
 

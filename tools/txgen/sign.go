@@ -8,6 +8,8 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	ecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 // secp256k1Order is the group order N of the secp256k1 curve, used for
@@ -24,7 +26,7 @@ var secp256k1Order, _ = new(big.Int).SetString(
 // returns RFC 6979 deterministic ECDSA but does NOT enforce low-S, so
 // we normalize manually.
 func SignTxID(privHex, txIDHex string) (string, error) {
-	if len(privHex) != PrivateKeyHexLen {
+	if len(privHex) != tronaddr.PrivateKeyHexLen {
 		return "", errors.New("private key must be 64 hex chars")
 	}
 	privRaw, err := hex.DecodeString(privHex)

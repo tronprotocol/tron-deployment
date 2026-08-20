@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 // runGenerate builds N signed transactions and writes them to CSV files
@@ -234,7 +236,7 @@ func buildSigners(cfg *Config) (*signerSet, error) {
 	}
 
 	if !pqcfg.Enabled || set.pqRatio < 100 {
-		senderHex, b58, err := AddressFromPrivateKey(cfg.Generate.PrivateKey)
+		senderHex, b58, err := tronaddr.AddressFromPrivateKey(cfg.Generate.PrivateKey)
 		if err != nil {
 			return nil, fmt.Errorf("derive sender address: %w", err)
 		}
@@ -261,7 +263,7 @@ func buildSigners(cfg *Config) (*signerSet, error) {
 func buildReceivers(n int) ([]AddressRow, error) {
 	rows := make([]AddressRow, 0, n)
 	for i := 0; i < n; i++ {
-		priv, hexAddr, b58, err := NewRandomAddress()
+		priv, hexAddr, b58, err := tronaddr.NewRandomAddress()
 		if err != nil {
 			return nil, fmt.Errorf("generate receiver %d: %w", i, err)
 		}
@@ -337,7 +339,7 @@ func generateBatch(
 		case roll < thrTRC10:
 			unsigned, buildErr = node.CreateTRC10Transfer(ctx, sgn.senderHex, receiver, cfg.Generate.TRC10ID, cfg.Generate.TransferAmount)
 		default:
-			c20, err := NormalizeAddress(cfg.Generate.TRC20Address)
+			c20, err := tronaddr.NormalizeAddress(cfg.Generate.TRC20Address)
 			if err != nil {
 				fail++
 				continue

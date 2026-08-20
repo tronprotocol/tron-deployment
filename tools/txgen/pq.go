@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+
+	"github.com/tronprotocol/tron-deployment/internal/tronaddr"
 )
 
 // Post-quantum (抗量子) signing for txgen.
@@ -73,9 +75,9 @@ func NewPQSigner(scheme, seedHex string) (*PQSigner, error) {
 
 	pubBytes := pub.Bytes()
 	// PQ address derivation matches the ECDSA flow: 0x41 ‖ Keccak-256(pk)[12..32].
-	// addressFromPubBytes hashes its input and keeps the last 20 bytes, so the
+	// tronaddr.AddressFromPubBytes hashes its input and keeps the last 20 bytes, so the
 	// full PQ public key is passed in place of the 64-byte ECDSA X‖Y.
-	hexAddr, b58 := addressFromPubBytes(pubBytes)
+	hexAddr, b58 := tronaddr.AddressFromPubBytes(pubBytes)
 	return &PQSigner{
 		scheme:  scheme,
 		priv:    priv,
