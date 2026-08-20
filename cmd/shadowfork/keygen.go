@@ -2,6 +2,7 @@ package shadowfork
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -17,7 +18,10 @@ import (
 // fork. The derivation is already in this repository for txgen, so the
 // subcommand is a few lines over internal/tronaddr.
 
-var kgOutPath string
+var (
+	kgOutPath string
+	kgCount   int
+)
 
 var keygenCmd = &cobra.Command{
 	Use:   "keygen",
@@ -31,39 +35,69 @@ stay out of version control.
 
   trond shadow-fork keygen                        # print to stdout
   trond shadow-fork keygen --out witness.env      # shell-sourceable
+  trond shadow-fork keygen --count 27             # a full slate
   trond shadow-fork keygen --output json          # for agents / jq
+
+A one-witness fork produces blocks but never solidifies them: the
+confirmation count sits at 1, far below the 19-of-27 a block needs
+before java-tron treats it as irreversible. Generate a slate with
+--count when the thing under test reads solidified state, or is about
+solidification stalling.
 
 With --out the file is written as shell exports, which is what
 scripts/poc-shadow-fork.sh sources:
 
   export SHADOW_FORK_WITNESS_KEY="..."
-  export SHADOW_FORK_WITNESS_ADDRESS="T..."`,
+  export SHADOW_FORK_WITNESS_ADDRESS="T..."
+
+Past the first, each witness is numbered so a script can source the
+file and loop:
+
+  export SHADOW_FORK_WITNESS_KEY_2="..."
+  export SHADOW_FORK_WITNESS_ADDRESS_2="T..."
+  export SHADOW_FORK_WITNESS_COUNT=27`,
 	RunE: runKeygen,
 }
 
 func init() {
 	keygenCmd.Flags().StringVar(&kgOutPath, "out", "",
 		"write shell exports to this file (0600) instead of stdout")
+	keygenCmd.Flags().IntVar(&kgCount, "count", 1,
+		"number of witnesses to generate — a chain needs more than 2/3 of them producing before it solidifies")
+}
+
+// witnessPair is one generated slate entry.
+type witnessPair struct {
+	PrivateKey string `json:"private_key,omitempty"`
+	Address    string `json:"address"`
+	HexAddress string `json:"hex_address"`
 }
 
 func runKeygen(cmd *cobra.Command, _ []string) error {
-	priv, hexAddr, addr, err := tronaddr.NewRandomAddress()
-	if err != nil {
-		return output.NewError("KEYGEN_ERROR", output.ExitGeneralError, err.Error())
+	if kgCount < 1 {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			"--count must be at least 1")
+	}
+
+	pairs := make([]witnessPair, 0, kgCount)
+	for range kgCount {
+		priv, hexAddr, addr, err := tronaddr.NewRandomAddress()
+		if err != nil {
+			return output.NewError("KEYGEN_ERROR", output.ExitGeneralError, err.Error())
+		}
+		pairs = append(pairs, witnessPair{PrivateKey: priv, Address: addr, HexAddress: hexAddr})
 	}
 
 	outputFmt, _ := cmd.Flags().GetString("output")
 
 	if kgOutPath != "" {
-		// 0600 from the start: the key must never exist world-readable,
+		// 0600 from the start: the keys must never exist world-readable,
 		// not even for the length of the write.
 		f, err := os.OpenFile(kgOutPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return output.NewError("KEYGEN_ERROR", output.ExitGeneralError, err.Error())
 		}
-		_, werr := fmt.Fprintf(f,
-			"export SHADOW_FORK_WITNESS_KEY=%q\nexport SHADOW_FORK_WITNESS_ADDRESS=%q\n",
-			priv, addr)
+		werr := writeExports(f, pairs)
 		if cerr := f.Close(); werr == nil {
 			werr = cerr
 		}
@@ -71,28 +105,51 @@ func runKeygen(cmd *cobra.Command, _ []string) error {
 			return output.NewError("KEYGEN_ERROR", output.ExitGeneralError, werr.Error())
 		}
 		if outputFmt == "json" {
-			// The private key is deliberately absent here: this path
-			// wrote it to a 0600 file, and the JSON goes to stdout,
-			// which lands in logs and agent transcripts.
+			// The private keys are deliberately absent: the caller asked
+			// for them on disk, and stdout ends up in logs and agent
+			// transcripts.
+			redacted := make([]witnessPair, len(pairs))
+			for i, p := range pairs {
+				redacted[i] = witnessPair{Address: p.Address, HexAddress: p.HexAddress}
+			}
 			return output.WriteJSON(os.Stdout, map[string]any{
-				"out":         kgOutPath,
-				"address":     addr,
-				"hex_address": hexAddr,
+				"out":       kgOutPath,
+				"count":     len(pairs),
+				"witnesses": redacted,
 			})
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Witness keypair written to %s (mode 0600)\n  address: %s\n",
-			kgOutPath, addr)
+		fmt.Fprintf(cmd.OutOrStdout(), "%d witness keypair(s) written to %s (mode 0600)\n",
+			len(pairs), kgOutPath)
+		for i, p := range pairs {
+			fmt.Fprintf(cmd.OutOrStdout(), "  %2d. %s\n", i+1, p.Address)
+		}
 		return nil
 	}
 
 	if outputFmt == "json" {
 		return output.WriteJSON(os.Stdout, map[string]any{
-			"private_key": priv,
-			"address":     addr,
-			"hex_address": hexAddr,
+			"count":     len(pairs),
+			"witnesses": pairs,
 		})
 	}
-	fmt.Fprintf(cmd.OutOrStdout(),
-		"export SHADOW_FORK_WITNESS_KEY=%q\nexport SHADOW_FORK_WITNESS_ADDRESS=%q\n", priv, addr)
-	return nil
+	return writeExports(cmd.OutOrStdout(), pairs)
+}
+
+// writeExports renders the slate as shell exports. The first witness is
+// unsuffixed so an existing single-witness script keeps working; the
+// rest are numbered from 2, and COUNT lets a caller loop.
+func writeExports(w io.Writer, pairs []witnessPair) error {
+	for i, p := range pairs {
+		suffix := ""
+		if i > 0 {
+			suffix = fmt.Sprintf("_%d", i+1)
+		}
+		if _, err := fmt.Fprintf(w,
+			"export SHADOW_FORK_WITNESS_KEY%s=%q\nexport SHADOW_FORK_WITNESS_ADDRESS%s=%q\n",
+			suffix, p.PrivateKey, suffix, p.Address); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "export SHADOW_FORK_WITNESS_COUNT=%d\n", len(pairs))
+	return err
 }
