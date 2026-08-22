@@ -231,7 +231,11 @@
 - [ ] T088 Run golangci-lint on entire codebase and fix all findings
 - [ ] T089 Run `trond config validate` against all example intent files to verify they pass
 - [ ] T090 Validate quickstart.md scenarios end-to-end
-- [ ] T091 Tag v0.1.0-alpha release and verify goreleaser + cosign pipeline
+- [ ] T091 Tag v0.1.0 release and verify goreleaser + cosign pipeline
+      (was `v0.1.0-alpha`; the phased alpha plan further down was never
+      followed — everything landed on develop untagged and ships as one
+      `v0.1.0`. `prerelease: auto` would also file any `-alpha` tag as a
+      pre-release, which `scripts/install.sh` does not resolve.)
 
 ---
 
