@@ -1,9 +1,11 @@
 name: Release
 
 on:
-  # Tag-triggered releases are temporarily paused (TX-167). The pipeline
-  # itself is kept intact; run it manually from the Actions tab or via
-  # `gh workflow run release.yml` when releases resume.
+  # Releases are cut by hand, deliberately — there is no `push: tags:`
+  # trigger and this is not a pause waiting to be lifted. Pushing a tag is
+  # cheap and easy to do by accident; publishing a signed release under this
+  # project's name should take an explicit act by someone who meant it. Run
+  # from the Actions tab, or `gh workflow run release.yml --ref <tag>`.
   workflow_dispatch:
 
 permissions:
