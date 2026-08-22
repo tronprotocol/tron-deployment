@@ -44,9 +44,17 @@ esac
 # --- resolve version ------------------------------------------------------
 
 if [ -z "$VERSION" ]; then
+    # /releases/latest returns only the newest NON-prerelease. goreleaser is
+    # configured with `prerelease: auto`, so a tag like v0.1.0-alpha is filed
+    # as a prerelease and this endpoint 404s even though releases exist —
+    # hence the failure below names that case instead of blaming the network.
+    # Installing a prerelease stays opt-in via TROND_VERSION; a `curl | sh`
+    # should not pick one up silently.
     if ! VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
         | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1); then
-        echo "trond: could not query the latest release; set TROND_VERSION explicitly" >&2
+        echo "trond: no stable release found (pre-releases are not installed by" >&2
+        echo "       default). Check https://github.com/${REPO}/releases and set" >&2
+        echo "       TROND_VERSION=<tag> to install a specific one." >&2
         exit 1
     fi
     if [ -z "$VERSION" ]; then

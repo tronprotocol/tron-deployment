@@ -41,12 +41,6 @@ SHA256, and drops the binary into `/usr/local/bin` (or `~/.local/bin` if it
 can't write the system path). Set `TROND_VERSION=v0.x.y` to pin a specific
 release, or `TROND_DEST=/path` to install elsewhere.
 
-### Homebrew (macOS / Linuxbrew)
-
-```bash
-brew install tronprotocol/tap/trond
-```
-
 ### Linux packages
 
 `.deb`, `.rpm`, and `.apk` packages are attached to every release, e.g.
@@ -58,14 +52,6 @@ sudo dpkg -i trond_*.deb
 
 # RHEL / Fedora
 sudo rpm -i https://github.com/tronprotocol/tron-deployment/releases/latest/download/trond_VERSION_linux_amd64.rpm
-```
-
-### Docker
-
-```bash
-docker run --rm -v ~/.trond:/home/trond/.trond \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  tronprotocol/trond:latest --help
 ```
 
 ### From release tarball
@@ -131,7 +117,9 @@ autoload -U compinit && compinit
 
 ## Verifying a release
 
-Every published release is signed with [Sigstore](https://www.sigstore.dev/) `cosign` keyless OIDC — no long-lived signing key, identity is the GitHub Actions workflow that built the release. The signature covers `checksums.txt`, which transitively covers every artifact (tarballs, .deb / .rpm / .apk packages, docker images, the homebrew formula).
+Every published release is signed with [Sigstore](https://www.sigstore.dev/) `cosign` keyless OIDC — no long-lived signing key, identity is the GitHub Actions workflow that built the release. The signature covers `checksums.txt`, and `checksums.txt` lists every artifact attached to the release: the tarballs and the .deb / .rpm / .apk packages. Verifying the signature and then checking your download against that file therefore covers everything this project publishes.
+
+GitHub Releases is the only channel — there is no Homebrew tap and no container image. Publishing to either would mean keeping a long-lived credential that could release under this project's name, which is the thing keyless signing exists to avoid, and neither a tap formula nor a registry image can be listed in `checksums.txt` in the first place. If you want a package-manager install, use the `.deb` / `.rpm` / `.apk` above or build [from source](#from-source).
 
 One-time setup:
 

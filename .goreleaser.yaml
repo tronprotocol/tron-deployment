@@ -4,7 +4,14 @@ project_name: trond
 
 before:
   hooks:
-    - go mod tidy
+    # `go mod download`, NOT `go mod tidy`: tidy WRITES to go.mod/go.sum, so
+    # the release could be built from a lockfile that differs from the
+    # reviewed, committed one. Observed in practice — a local
+    # `goreleaser release --snapshot` left go.sum modified in the worktree.
+    # download only fetches what go.sum already pins; `go mod verify` then
+    # re-checks those modules against their recorded hashes.
+    - go mod download
+    - go mod verify
 
 builds:
   - id: trond
@@ -40,7 +47,7 @@ builds:
 
 archives:
   - id: default
-    builds:
+    ids:
       - trond
     formats:
       - tar.gz
@@ -52,7 +59,7 @@ archives:
       - schemas/*
 
   - id: replay
-    builds:
+    ids:
       - replay
     formats:
       - tar.gz
@@ -136,60 +143,29 @@ nfpms:
         file_info:
           mode: 0644
 
-# Homebrew tap so `brew install tronprotocol/tap/trond` works on macOS
-# and Linuxbrew. Requires the GitHub user to maintain a `homebrew-tap`
-# repo under the same org; goreleaser bumps the formula automatically
-# on every release.
+# Distribution policy: GitHub Releases is the ONLY publication channel.
 #
-# TODO: goreleaser is phasing out `brews` in favor of `homebrew_casks`.
-# Casks are traditionally for GUI/.app installs but Homebrew has been
-# pushing CLI tools through them too. Migration changes the user-facing
-# install command from `brew install` to `brew install --cask` and
-# requires retesting against Linuxbrew. Hold until goreleaser actually
-# removes brews — it's been "phasing out" for >1 year and the formula
-# path is still the cleaner UX for CLI tools.
-brews:
-  - name: trond
-    # Scope to the trond archive only — the homebrew tap installs the
-    # main CLI, not the sibling replay tool. Without ids, goreleaser
-    # tries to package both archives under the same OS/Arch slot and
-    # errors with "one tap can handle only one archive".
-    ids:
-      - default
-    repository:
-      owner: tronprotocol
-      name: homebrew-tap
-      branch: main
-    homepage: https://github.com/tronprotocol/tron-deployment
-    description: CLI for declarative TRON node deployment
-    license: MIT
-    test: |
-      system "#{bin}/trond version"
-    install: |
-      bin.install "trond"
-      generate_completions_from_executable(bin/"trond", "completion")
-
-# Docker image — useful for CI runners and one-off "exec into a trond"
-# scenarios. The dockers_v2 block replaced the older `dockers` +
-# `docker_manifests` pair: it builds a single multi-arch manifest in
-# one pass instead of two per-arch builds plus a manual manifest fan-in.
-# `platforms` enumerates the targets; goreleaser fans out to buildx.
-dockers_v2:
-  - id: trond
-    images:
-      - "tronprotocol/trond"
-    tags:
-      - "{{ .Version }}"
-      - "latest"
-    platforms:
-      - linux/amd64
-      - linux/arm64
-    dockerfile: Dockerfile.release
-    labels:
-      org.opencontainers.image.source: "https://github.com/tronprotocol/tron-deployment"
-      org.opencontainers.image.version: "{{ .Version }}"
-      org.opencontainers.image.revision: "{{ .FullCommit }}"
-
+# A Homebrew tap and a Docker Hub image were both configured here and were
+# deliberately removed. Each needed a long-lived credential stored in this
+# repository's Actions secrets — a cross-repo PAT for `tronprotocol/homebrew-tap`
+# (the default GITHUB_TOKEN cannot write to another repository) and a
+# DOCKERHUB_TOKEN — and anything holding those can publish a "trond" that users
+# trust, under the official name, indefinitely, until someone notices and
+# rotates. The cosign signing above is keyless: its credential is an OIDC token
+# minted for one workflow run and worthless a minute later. Adding a channel
+# that reintroduces a standing secret undoes most of what that buys.
+#
+# It is also what the signature can actually reach. `signs:` covers
+# checksums.txt, and checksums.txt lists the file artifacts goreleaser built —
+# the archives and the deb/rpm/apk packages. A tap formula is pushed to another
+# repository and a container image is pushed by digest to a registry; neither
+# appears in checksums.txt, so neither was covered by the signature the README
+# told users to rely on.
+#
+# Reintroducing either is a real option, not a prohibition — but it needs a
+# named credential-rotation owner and a verification story of its own (a
+# fine-grained PAT scoped to contents:write on the tap alone; `cosign sign` on
+# the image digest, or GHCR + build provenance instead of Docker Hub).
 release:
   github:
     owner: tronprotocol

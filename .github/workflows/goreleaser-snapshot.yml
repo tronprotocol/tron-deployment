@@ -2,12 +2,12 @@ name: GoReleaser Snapshot
 
 # Smoke-tests the goreleaser pipeline on every PR that touches the
 # .goreleaser.yaml or release-related Go files. Catches manifest
-# typos, missing dependencies, and dockers_v2 schema drift before
-# a real tag pushes them to production.
+# typos, missing dependencies, and schema drift before a real tag
+# pushes them to production.
 #
 # Skips publishing — only generates artifacts to dist/ and validates
 # they're produced. Asserts every advertised artifact format
-# (binary, deb, rpm, brew, docker) materialised.
+# (binary, deb, rpm, apk) materialised.
 
 on:
   pull_request:
@@ -41,12 +41,10 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          # Skip docker too — building images in a snapshot smoke is
-          # noisy (depends on the binary layout produced by goreleaser
-          # itself, which can drift between versions) and doesn't add
-          # signal beyond the artifact-exists checks below. Docker
-          # builds run in the real release pipeline.
-          args: release --snapshot --clean --skip=publish,sign,docker
+          # Signing is skipped: cosign keyless needs an OIDC token this
+          # read-only PR job deliberately does not have. It runs for real
+          # in release.yml.
+          args: release --snapshot --clean --skip=publish,sign
 
       - name: Inspect dist/
         run: |
@@ -57,7 +55,10 @@ jobs:
         # goreleaser names archives as `<binary>_<version>_<os>_<arch>.<ext>`
         # with underscores (its default name_template), not hyphens.
         # Each format below is in goreleaser.yaml; if removed, drop
-        # from the matrix here at the same time.
+        # from the matrix here at the same time. GitHub Releases is the
+        # only publication channel, so every glob here is a file attached
+        # to the release and hashed into checksums.txt — which is exactly
+        # what the cosign signature covers.
         run: |
           set -e
           fail=0
@@ -70,7 +71,6 @@ jobs:
             'dist/*.rpm'
             'dist/*.apk'
             'dist/checksums.txt'
-            'dist/homebrew/*.rb'
           )
           for g in "${want_globs[@]}"; do
             files=( $g )

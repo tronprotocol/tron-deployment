@@ -185,12 +185,10 @@ The agent-ergonomics arc lands across four sequenced PRs:
   `.github/dependabot.yml`
 - `cmd/gendoc` — emits man(1) pages and per-command markdown
 - `scripts/install.sh` — single-shot installer with SHA256 verification
-- `Dockerfile.release` — slim alpine image with `tronprotocol/trond`
 
 ### Changed
-- `goreleaser` now produces a homebrew tap, .deb / .rpm / .apk, and
-  multi-arch docker image alongside tar.gz archives; release notes
-  group commits by feat/fix
+- `goreleaser` now produces .deb / .rpm / .apk packages alongside the
+  tar.gz archives; release notes group commits by feat/fix
 - CI matrix expanded: `lint`, `test+coverage`, `govulncheck`, and
   cross-compile jobs run on every PR; e2e is its own workflow with
   the heavier schedule
@@ -263,6 +261,29 @@ The agent-ergonomics arc lands across four sequenced PRs:
   the SSH key after apply)
 
 ### Security
+- **GitHub Releases is the only publication channel.** The Homebrew tap and
+  the `tronprotocol/trond` Docker image were configured and are removed
+  before the first tag. Both needed a long-lived credential in this
+  repository's Actions secrets — a cross-repo PAT for the tap (the default
+  `GITHUB_TOKEN` cannot write to another repository) and a `DOCKERHUB_TOKEN`
+  — and either would let its holder publish under this project's name until
+  someone noticed and rotated it. That is the standing-secret risk cosign
+  keyless signing exists to remove. Neither channel's artifact could be
+  listed in `checksums.txt` either, so the README's claim that the signature
+  covered "docker images, the homebrew formula" was false; a snapshot build
+  confirms `checksums.txt` holds only the archives and the deb/rpm/apk
+  packages. README, the goreleaser manifest, and the project constitution
+  now agree on this
+- Third-party actions in `release.yml` are pinned to a commit SHA rather
+  than a moving tag, and `goreleaser-action`'s `version: latest` is pinned
+  to a range. That job holds `contents: write` and `id-token: write`, so
+  everything it runs is inside the trusted computing base of every
+  signature the project issues; a tag repointed upstream would have been an
+  unreviewed change to the signer
+- The goreleaser `before:` hook ran `go mod tidy`, which WRITES to
+  `go.mod`/`go.sum` — a release could be built from a lockfile other than
+  the reviewed, committed one (a local snapshot run did modify `go.sum`).
+  Replaced with `go mod download` + `go mod verify`
 - Reject control characters (`\n`, `\r`, …) in every free-form intent
   field; struct-tag `safe_string` + manual map/slice walk close compose
   YAML and systemd unit injection vectors
@@ -314,8 +335,6 @@ The agent-ergonomics arc lands across four sequenced PRs:
   `monitoring.grafana.expose: true`, which now requires
   `monitoring.grafana.admin_password_env` (the NAME of an env var
   feeding `GF_SECURITY_ADMIN_PASSWORD`)
-
-## [0.1.0-alpha] — 2026-XX-XX
 
 ## [0.1.0-alpha] — 2026-XX-XX
 

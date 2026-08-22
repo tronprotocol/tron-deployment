@@ -166,9 +166,14 @@ The implementation language for trond V1 is **Go**. This decision is binding bec
   bump and a documented migration path.
 - Pipelines MUST pin trond to an explicit version. Use of `latest` in CI is forbidden in
   documentation and examples.
-- Distribution channels for V1: GitHub Releases binaries (with SHA256), official Docker
-  image (`tronprotocol/trond:<version>`), and the `setup-trond` GitHub Action. V2 may add
-  Homebrew tap, install.sh, apt/yum packages.
+- Distribution channel for V1: GitHub Releases ONLY — cross-compiled binaries and
+  .deb/.rpm/.apk packages, hashed into `checksums.txt`, which is signed with cosign
+  keyless OIDC. `scripts/install.sh` consumes that release and verifies the hash.
+  Channels needing a standing publish credential (a Homebrew tap, a container
+  registry) are deliberately excluded: that credential could publish under this
+  project's name until someone rotated it, and its artifacts cannot appear in the
+  `checksums.txt` the signature covers. Adding one is a V2 decision that MUST come
+  with a named rotation owner and a verification story of its own.
 - Offline / air-gapped environments MUST be supported via the `TROND_DOWNLOAD_MIRROR`
   environment variable, which redirects all of trond's external downloads (jars, snapshots,
   bootstrap dependencies) to a user-supplied internal mirror.
