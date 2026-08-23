@@ -26,7 +26,7 @@ Every command accepts:
 | 2 | VALIDATION_ERROR | Intent file or config validation failed |
 | 3 | TARGET_UNREACHABLE | SSH connection failed or Docker not available |
 | 4 | PREFLIGHT_FAILURE | Target does not meet requirements |
-| _(5 unassigned)_ | — | Reserved. Partial multi-node results exit 1 with `error_code: "PARTIAL_SUCCESS"`; the distinction is in the JSON payload, not the exit status |
+| _(5 unassigned)_ | — | Reserved. `network destroy` reports a partial result as exit 1 with `error_code: "PARTIAL_SUCCESS"` plus a `failed` array; the distinction is in the JSON payload, not the exit status |
 | 10 | HUMAN_REQUIRED | Destructive change in non-interactive mode without --auto-approve |
 
 Exit codes are stable across minor versions. New codes may be added in minor releases;

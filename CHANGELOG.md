@@ -28,20 +28,26 @@ The agent-ergonomics arc landed across four sequenced PRs:
 
 ### Added
 
+The release ships **40 top-level commands** plus their subcommands, across
+lifecycle (apply / plan / stop / start / restart / upgrade / rollback /
+remove), configuration (config validate / render / diff / docs,
+verify-config), observability (status / list / logs / health / diagnose /
+verify / inspect / events / doctor), the test-harness SDK (exec / files /
+wait), chaos primitives (disconnect / connect / partition / heal /
+auto-heal), private networks (network create / add / status / destroy /
+upgrade), snapshots (download / clone / list / sources / jobs / logs / stop /
+prune), builds from source (build / list / inspect / prune), shadow-fork
+(mutate), agent interfaces (schema / mcp / recipe list / show / validate /
+run), environment (preflight / bootstrap), the knowledge base, and meta
+(version / completion / help). `trond schema` emits the whole surface as
+structured data; **Foundation** and **Since** below split it by when it
+landed.
+
 **Foundation**
 
-- 40 top-level CLI commands (plus subcommands) across lifecycle (apply /
-  plan / stop / start / restart / upgrade / rollback / remove), configuration
-  (config validate / render / diff / docs, verify-config), observability
-  (status / list / logs / health / diagnose / verify / inspect / events /
-  doctor), test-harness SDK (exec / files / wait), chaos primitives
-  (disconnect / connect / partition / heal / auto-heal), private networks
-  (network create / add / status / destroy / upgrade), snapshots (download /
-  clone / list / sources / jobs / logs / stop / prune), builds from source
-  (build / list / inspect / prune), shadow-fork (mutate), agent interfaces
-  (schema / mcp / recipe list / show / validate / run), environment
-  (preflight / bootstrap), knowledge base, and meta (version / completion /
-  help)
+- The CLI itself: lifecycle, configuration, observability, the test-harness
+  SDK, chaos primitives, private networks, environment setup and the
+  knowledge base — the command groups the project launched with
 - Declarative intent.yaml schema covering ~50 fields:
   target (local/ssh, runtime, auto_ports), node (type, version, image, ports,
   resources, jvm, storage, restart, extra_env, extra_args, labels, networks,

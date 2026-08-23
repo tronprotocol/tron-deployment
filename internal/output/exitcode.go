@@ -8,10 +8,10 @@ const (
 	ExitValidationError   = 2 // Intent file or config validation failed
 	ExitTargetUnreachable = 3 // SSH connection failed or Docker not available
 	ExitPreflightFailure  = 4 // Target does not meet requirements
-	// No code 5. A multi-node command that partially succeeds returns
-	// ExitGeneralError with `error_code: "PARTIAL_SUCCESS"` in the JSON
-	// (see cmd/network/destroy.go) — the machine-readable distinction lives
-	// in the payload, not the exit status. A `ExitPartialSuccess = 5`
+	// No code 5. `network destroy` — the one command with a partial result
+	// today — returns ExitGeneralError with `error_code: "PARTIAL_SUCCESS"`
+	// and a `failed` array, so the machine-readable distinction lives in the
+	// payload, not the exit status. A `ExitPartialSuccess = 5`
 	// constant sat here unreferenced by any command; callers that branched
 	// on 5 would have waited forever for a code nothing emitted. 5 is left
 	// unassigned rather than reused, so it stays available if the split is
