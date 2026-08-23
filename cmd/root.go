@@ -23,7 +23,6 @@ var (
 	quiet        bool
 	verbose      bool
 	noColor      bool
-	configFile   string
 	stateDirFlag string
 )
 
@@ -51,10 +50,22 @@ for CI pipelines and AI agents.`,
 	SilenceErrors: true,
 	// Apply --state-dir before any subcommand runs so subpackages
 	// (cmd/network, cmd/config) see the same base.
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Reject an unknown --output rather than falling through to text.
+		// The writers switch on "json" and default to text, so `-o yaml`
+		// (which an older contract doc advertised) or a plain typo used to
+		// return a human table to a caller that asked for machine output —
+		// silently, with exit 0. An agent then parses a table as JSON.
+		if err := validateFormat("--output", outputFormat); err != nil {
+			return err
+		}
+		if err := validateFormat("--log-format", logFormat); err != nil {
+			return err
+		}
 		if stateDirFlag != "" {
 			paths.SetBaseDir(stateDirFlag)
 		}
+		return nil
 	},
 }
 
@@ -69,7 +80,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-essential output")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Increase log verbosity")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable ANSI colors")
-	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "Config file (default ~/.trond/config.yaml)")
+	// No --config flag. One was registered here and advertised in --help as
+	// "Config file (default ~/.trond/config.yaml)", but nothing ever read the
+	// variable: passing --config /nonexistent succeeded silently. There is no
+	// config-file feature, so the flag is gone rather than left lying about a
+	// setting it does not have. --state-dir below is the real knob.
 	rootCmd.PersistentFlags().StringVar(&stateDirFlag, "state-dir", "", "Directory for state.json, audit.log, deployments (default ~/.trond, env: TROND_STATE_DIR)")
 	// Persistent safety gate: refuse any mutating verb unless the node's
 	// network is private. A one-way floor — this flag OR a truthy
@@ -136,5 +151,20 @@ func Log() *output.Logger {
 func mustMarkRequired(cmd *cobra.Command, name string) {
 	if err := cmd.MarkFlagRequired(name); err != nil {
 		panic(fmt.Sprintf("mark flag %q required on %s: %v", name, cmd.Name(), err))
+	}
+}
+
+// validateFormat rejects a format value the writers cannot honour. Both
+// output.Write* helpers switch on "json" and fall through to text for
+// anything else, so without this an unrecognised value degrades silently:
+// `-o yaml` (advertised by an old contract doc) or a typo returned a human
+// table, with exit 0, to a caller that asked for machine-readable output.
+func validateFormat(flag, value string) error {
+	switch value {
+	case "text", "json":
+		return nil
+	default:
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			fmt.Sprintf("unknown %s %q: expected text or json", flag, value))
 	}
 }

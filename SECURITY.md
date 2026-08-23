@@ -4,7 +4,11 @@
 
 | Version | Supported |
 |---|---|
-| 0.1.x (alpha) | Yes |
+| 0.1.x | Yes |
+
+`0.1.x` is a `0.x` series under semantic versioning: the intent schema, the
+`--output json` schemas and the exit-code contract may still change between
+minor releases. Security fixes land on the newest `0.1.x`.
 
 ## Reporting a Vulnerability
 
@@ -41,9 +45,10 @@ Include:
 
 trond incorporates the following security measures:
 
-- **Private key protection**: Witness private keys are passed via environment variables, never stored in intent files. The `PrivateKey` type redacts values in all string representations and JSON serialization.
+- **Private key protection**: Witness private keys are passed via environment variables, never written into intent files, and the `PrivateKey` type redacts them in every string representation and JSON serialization. They are not, however, absent from disk: at apply time the key is inlined into the rendered HOCON, because that is where java-tron reads `localwitness` from. That file is created 0600. Treat the rendered config as key material.
+- **Public private-net key**: `private_net_config.conf` ships a *published* witness key (`a31d54…acae`, address `TM4yToQ1njkcFwi3ADY5x6dbdfNekU3rVi`) because the private network's genesis block is derived from it — without it the template cannot produce blocks. It is public, it is in this repository, and it must never be used on mainnet, Nile, or any network carrying value.
 - **SSH command whitelist**: Only pre-approved commands are executed over SSH connections.
-- **Audit log**: All mutating operations (apply, stop, start, remove, upgrade, rollback, network create/destroy) are logged to `~/.trond/audit.log` in append-only JSONL format.
+- **Audit log**: All mutating operations (apply, stop, start, remove, upgrade, rollback, network create/destroy) are logged in append-only JSONL format to `~/.trond/audit.log`, or to `<dir>/audit.log` when `--state-dir` / `TROND_STATE_DIR` relocates the state directory.
 - **Confirmation gates**: Destructive operations (remove, destroy) require explicit `--confirm` flags.
 - **State file permissions**: State and audit files are created with restricted permissions (0600/0700).
 

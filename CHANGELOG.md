@@ -30,13 +30,18 @@ The agent-ergonomics arc landed across four sequenced PRs:
 
 **Foundation**
 
-- 32 CLI commands across lifecycle (apply / stop / start / restart / upgrade /
-  rollback / remove), configuration (validate / render / diff / docs),
-  observability (status / list / logs / health / diagnose / verify / inspect /
-  events), test-harness SDK (exec / files / wait), chaos primitives
-  (disconnect / connect / partition / heal), private networks (create / add /
-  status / destroy), environment (preflight / bootstrap), knowledge base, and
-  meta (version / completion / help)
+- 40 top-level CLI commands (plus subcommands) across lifecycle (apply /
+  plan / stop / start / restart / upgrade / rollback / remove), configuration
+  (config validate / render / diff / docs, verify-config), observability
+  (status / list / logs / health / diagnose / verify / inspect / events /
+  doctor), test-harness SDK (exec / files / wait), chaos primitives
+  (disconnect / connect / partition / heal / auto-heal), private networks
+  (network create / add / status / destroy / upgrade), snapshots (download /
+  clone / list / sources / jobs / logs / stop / prune), builds from source
+  (build / list / inspect / prune), shadow-fork (mutate), agent interfaces
+  (schema / mcp / recipe list / show / validate / run), environment
+  (preflight / bootstrap), knowledge base, and meta (version / completion /
+  help)
 - Declarative intent.yaml schema covering ~50 fields:
   target (local/ssh, runtime, auto_ports), node (type, version, image, ports,
   resources, jvm, storage, restart, extra_env, extra_args, labels, networks,

@@ -9,12 +9,13 @@ Every command accepts:
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| --output | -o | enum | text | Output format: text, json, yaml |
-| --log-format | | enum | text | Log format: text, json |
+| --output | -o | enum | text | Output format: text, json. Any other value is refused with exit 2 |
+| --log-format | | enum | text | Log format: text, json. Any other value is refused with exit 2 |
 | --quiet | -q | bool | false | Suppress non-essential output |
 | --verbose | -v | bool | false | Increase log verbosity |
 | --no-color | | bool | false | Disable ANSI colors |
-| --config | | string | ~/.trond/config.yaml | trond config file path |
+| --state-dir | | string | ~/.trond | Directory for state.json, audit.log, deployments (env: TROND_STATE_DIR) |
+| --require-private | | bool | false | Refuse to mutate any non-private node; one-way (env: TROND_REQUIRE_PRIVATE) |
 
 ## Exit Codes
 
@@ -25,7 +26,7 @@ Every command accepts:
 | 2 | VALIDATION_ERROR | Intent file or config validation failed |
 | 3 | TARGET_UNREACHABLE | SSH connection failed or Docker not available |
 | 4 | PREFLIGHT_FAILURE | Target does not meet requirements |
-| 5 | PARTIAL_SUCCESS | Multi-node operation: some succeeded, some failed |
+| _(5 unassigned)_ | — | Reserved. Partial multi-node results exit 1 with `error_code: "PARTIAL_SUCCESS"`; the distinction is in the JSON payload, not the exit status |
 | 10 | HUMAN_REQUIRED | Destructive change in non-interactive mode without --auto-approve |
 
 Exit codes are stable across minor versions. New codes may be added in minor releases;

@@ -196,6 +196,12 @@ the genesis address `TM4yToQ1njkcFwi3ADY5x6dbdfNekU3rVi` baked into the
 `private_net_config.conf` template. Use that exact key unless you also
 supply a fresh genesis block.
 
+This key is **public** — it ships in the template and in this document, so
+treat any rig using it as unauthenticated: anyone who can reach the node can
+sign as the witness and spend the genesis balance. That is fine for a
+throwaway test network on a trusted host and unacceptable anywhere else.
+Never reuse it on Mainnet, Nile, or any network carrying value.
+
 ## Tear-down: always clean up
 
 ```bash

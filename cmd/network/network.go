@@ -21,7 +21,10 @@ func init() {
 	Cmd.AddCommand(createCmd)
 	Cmd.AddCommand(statusCmd)
 	Cmd.AddCommand(destroyCmd)
-	Cmd.AddCommand(upgradeCmd)
+	// upgradeCmd registers itself in upgrade.go's init(), next to the
+	// MarkFlagRequired calls that must run with it. Adding it here too put
+	// it in the parent's child list twice, so `network --help` printed the
+	// row twice. `add` follows the same self-registering pattern.
 }
 
 // auditEvent mirrors the struct in the cmd package. The network subcommand

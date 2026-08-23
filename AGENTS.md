@@ -81,6 +81,13 @@ Unset (default) → no-op tracer, zero overhead, no network IO.
 | 4 | preflight failure (missing dependency on target) | DO NOT retry — present `missing_components` array to user; offer `trond bootstrap` |
 | 10 | `HUMAN_REQUIRED` — destructive op needs explicit confirmation | DO NOT silently retry with `--auto-approve` / `--confirm` unless the user has authorised that for this session |
 
+There is no exit code for partial success. A multi-node command where some
+nodes succeeded and others failed exits **1** with `error_code:
+"PARTIAL_SUCCESS"` and a `failed` array naming the nodes — so branch on
+`error_code`, not on the exit status alone, before retrying. Re-running the
+whole command is usually wrong: the nodes that succeeded are already in the
+requested state.
+
 Every error JSON has the same shape:
 
 ```json
@@ -394,6 +401,9 @@ trond preflight --intent my-net.yaml -o json
 
 # 4. Create the whole network in one shot. trond auto-wires
 #    node.active between siblings so peering works under auto_ports.
+# SR_KEY below is the PUBLIC private-net key baked into
+# private_net_config.conf's genesis. It is safe here and only here —
+# never reuse it on a network that carries value.
 SR_KEY=a31d54825aea2fc5127e3bd435fc2346021313005e5f304ab33372432784acae \
   trond network create --intent my-net.yaml --wait -o json
 # Output: {"network":"pn", "nodes":[{"name":"pn-node0", "endpoints":{...}}, ...]}
