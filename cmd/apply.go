@@ -12,6 +12,7 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -150,7 +151,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		State:          deployState,
 		IntentHash:     intentHash,
 		Existing:       existing,
-		TemplateDir:    findTemplatesDir(),
+		TemplateDir:    render.FindTemplatesDir(),
 		DeploymentsDir: deploymentsDir(),
 		EnvVars:        resolveEnvVars(&parsed.Nodes[0]),
 		IntentPath:     applyIntentPath, // FR-021: relative build.source resolves vs this
@@ -223,23 +224,6 @@ func resolveEnvVars(node *intent.NodeSpec) map[string]string {
 		}
 	}
 	return env
-}
-
-// findTemplatesDir returns an optional on-disk templates directory.
-// Empty return signals render to use the embedded copy.
-func findTemplatesDir() string {
-	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
-		return d
-	}
-	candidates := []string{"templates", "./templates"}
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			if _, err := os.Stat(c + "/main_net_config.conf"); err == nil {
-				return c
-			}
-		}
-	}
-	return ""
 }
 
 // exitWithError returns a StructuredError for propagation through cobra RunE.

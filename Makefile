@@ -119,6 +119,7 @@ vuln: $(GO_BOOTSTRAP)
 	$(GOPATH)/bin/govulncheck ./...
 
 ## sync-templates: Refresh mainnet + nile config templates from upstream
+##                 into the embedded template dir (internal/render/templates).
 ##                 Source-of-truth URLs:
 ##                   mainnet: tronprotocol/java-tron develop branch
 ##                   nile:    tron-nile-testnet/nile-testnet master branch
@@ -129,11 +130,9 @@ NILE_URL    := https://raw.githubusercontent.com/tron-nile-testnet/nile-testnet/
 
 sync-templates:
 	@echo "fetching mainnet template..."
-	curl -fsSL $(MAINNET_URL) -o main_net_config.conf
-	cp main_net_config.conf internal/render/templates/main_net_config.conf
+	curl -fsSL $(MAINNET_URL) -o internal/render/templates/main_net_config.conf
 	@echo "fetching nile template..."
-	curl -fsSL $(NILE_URL) -o test_net_config.conf
-	cp test_net_config.conf internal/render/templates/test_net_config.conf
+	curl -fsSL $(NILE_URL) -o internal/render/templates/test_net_config.conf
 	@echo "templates refreshed. Re-run 'make build test' to confirm."
 
 ## sync-schemas: Mirror schemas/output/ into internal/schema/files/ so

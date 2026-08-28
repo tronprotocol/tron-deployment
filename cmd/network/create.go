@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -82,7 +81,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		tgt = target.NewLocalTarget()
 	}
 
-	templateDir := findTemplatesDir()
+	templateDir := render.FindTemplatesDir()
 	workDir := paths.Deployments()
 
 	// Hold the state lock across the whole load-modify-save cycle: this
@@ -269,21 +268,6 @@ func autoWireActivePeers(parsed *intent.Intent) {
 		}
 		parsed.Nodes[i].NetworkOverrides.ActivePeers = &others
 	}
-}
-
-func findTemplatesDir() string {
-	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
-		return d
-	}
-	candidates := []string{"templates", "./templates"}
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			if _, err := os.Stat(filepath.Join(c, "main_net_config.conf")); err == nil {
-				return c
-			}
-		}
-	}
-	return ""
 }
 
 // deployNetworkMonitoring deploys a single monitoring stack for an entire

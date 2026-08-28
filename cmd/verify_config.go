@@ -93,7 +93,7 @@ func runVerifyConfig(cmd *cobra.Command, args []string) error {
 	// comparison runs against the REAL bytes (redacting here would make
 	// every witness node report permanent false drift against its live
 	// conf); lineDiff redacts each line as it emits it.
-	renderedDesired, err := render.RenderHOCONWithSecrets(findTemplatesDir(), parsed, &parsed.Nodes[0])
+	renderedDesired, err := render.RenderHOCONWithSecrets(render.FindTemplatesDir(), parsed, &parsed.Nodes[0])
 	if err != nil {
 		return exitWithError("RENDER_ERROR", output.ExitGeneralError, err.Error())
 	}

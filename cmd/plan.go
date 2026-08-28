@@ -77,7 +77,7 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	existing := store.GetNode(deployState, parsed.Name)
 
 	// 4. Render config to compute config hash
-	templateDir := findTemplatesDir()
+	templateDir := render.FindTemplatesDir()
 	node := &parsed.Nodes[0]
 
 	rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)
