@@ -645,9 +645,10 @@ The image's entrypoint (`./bin/docker-entrypoint.sh`) execs
 
 This repository started life as a curated set of HOCON config files for
 java-tron. Operators would `wget` or `git clone` the file matching their
-network and then hand-edit it. That workflow is still supported (see
-[Configuration Templates](#configuration-templates) — the same files
-sit at the repo root and get refreshed from upstream on every release).
+network and then hand-edit it. That workflow is still supported — only the
+mainnet and Nile files now come from the upstream repositories that own them
+rather than from this repo's root, while `private_net_config.conf` is still
+maintained here (see [Configuration Templates](#configuration-templates)).
 
 What this repo *also* provides now is a small, opinionated CLI that
 removes the hand-editing step. The same templates are embedded in the
@@ -657,7 +658,7 @@ deterministically; `trond apply` deploys it.
 
 | Workflow | Before | Now (optional) |
 |---|---|---|
-| Get a template | `git clone` + open `main_net_config.conf` | `trond config render <intent.yaml>` |
+| Get a template | `wget` the [upstream `config.conf`](https://github.com/tronprotocol/java-tron/blob/develop/framework/src/main/resources/config.conf) + hand-edit | `trond config render <intent.yaml>` |
 | Tweak ports / features | Edit the `.conf` directly | Set `ports:` / `features:` in intent |
 | Apply changes to a node | scp + restart by hand | `trond apply --intent <file>` (idempotent) |
 | Multi-node private network | Repeat the above N times | `trond network create --intent <file>` |
@@ -716,9 +717,10 @@ make sync-templates    # fetches mainnet + nile, leaves private alone
 ```
 
 After a sync, run `make test` and `./bin/trond config validate examples/*.yaml`
-to confirm nothing broke. Keep both copies in sync — `templates/<file>` is a
-symlink pointing at the root `<file>`, and `internal/render/templates/<file>`
-is the embedded copy used at runtime.
+to confirm nothing broke. The mainnet and Nile templates live only in
+`internal/render/templates/`. `private_net_config.conf` additionally keeps a
+repo-root copy that `templates/private_net_config.conf` symlinks to — keep it
+in sync with the embedded copy used at runtime.
 
 ## Examples
 

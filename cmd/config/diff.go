@@ -36,7 +36,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	}
 
 	// Render new config
-	templateDir := findTemplateDir()
+	templateDir := render.FindTemplatesDir()
 	node := &parsed.Nodes[0]
 
 	rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)

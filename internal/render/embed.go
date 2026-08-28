@@ -17,6 +17,10 @@ var embeddedTemplates embed.FS
 //go:embed dashboards/*.json
 var embeddedDashboards embed.FS
 
+// localTemplatesDir is the working-directory override FindTemplatesDir looks
+// for when TROND_TEMPLATES_DIR is unset.
+const localTemplatesDir = "templates"
+
 // LoadTemplate returns the raw HOCON template for the given network. When
 // templateDir is non-empty and contains the matching file, the on-disk copy
 // wins (useful for local development and tests). Otherwise we fall through
@@ -47,4 +51,30 @@ func LoadTemplate(templateDir, network string) ([]byte, error) {
 // LoadDashboard returns an embedded Grafana dashboard JSON by filename.
 func LoadDashboard(name string) ([]byte, error) {
 	return embeddedDashboards.ReadFile("dashboards/" + name)
+}
+
+// FindTemplatesDir resolves the on-disk templates directory that overrides
+// the embedded copies, or "" to use the embedded ones. This is the single
+// definition of "what counts as a templates directory" — every command
+// resolves through it, so the rule can only ever change in one place.
+//
+// TROND_TEMPLATES_DIR wins outright. Otherwise a local ./templates directory
+// counts only when it actually carries one of the known templates; any single
+// one is enough, since keying off one particular network would ignore a
+// directory that only carries the others. LoadTemplate still falls back to
+// the embedded copy per network, so a partial directory is fine.
+func FindTemplatesDir() string {
+	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
+		return d
+	}
+	info, err := os.Stat(localTemplatesDir)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	for _, name := range NetworkTemplate {
+		if _, err := os.Stat(filepath.Join(localTemplatesDir, name)); err == nil {
+			return localTemplatesDir
+		}
+	}
+	return ""
 }

@@ -182,7 +182,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		intent.ApplyMonitoringDefaults(parsed.Monitoring)
 	}
 
-	templateDir := findTemplatesDir()
+	templateDir := render.FindTemplatesDir()
 	rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)
 	if err != nil {
 		return fmt.Errorf("render config: %w", err)
