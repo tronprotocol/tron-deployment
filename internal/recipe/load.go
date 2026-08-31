@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -105,12 +106,24 @@ func (r Recipe) Validate() error {
 		}
 		seen[s.ID] = true
 	}
+	for _, section := range []struct {
+		name  string
+		steps []Step
+	}{{"steps", r.Steps}, {"rollback", r.Rollback}} {
+		for _, s := range section.steps {
+			if s.ID != "" && !recipeIDPattern.MatchString(s.ID) {
+				problems = append(problems, fmt.Sprintf("%s step id %q is invalid; use only [A-Za-z_][A-Za-z0-9_]* for {{ steps.<id>.* }} references", section.name, s.ID))
+			}
+		}
+	}
 
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid recipe:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	return nil
 }
+
+var recipeIDPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // validOnFailure mirrors the runner's switch. Anything else falls to the
 // default there, which is "abort" — so `on_failure: rollbck` would abort

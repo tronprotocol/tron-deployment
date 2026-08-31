@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/spf13/cobra"
 
 	"github.com/tronprotocol/tron-deployment/internal/apply"
@@ -95,9 +97,6 @@ func runApply(cmd *cobra.Command, args []string) error {
 		}
 		parsed.Monitoring.Enabled = intent.BoolPtr(true)
 		intent.ApplyMonitoringDefaults(parsed.Monitoring)
-	} else if parsed.Monitoring != nil && parsed.Monitoring.Enabled != nil && *parsed.Monitoring.Enabled {
-		// Intent says enabled=true, but no --monitor flag: disable.
-		parsed.Monitoring.Enabled = intent.BoolPtr(false)
 	}
 
 	// 2. Resolve target. SSH cert handling lives here in the cmd
@@ -128,14 +127,40 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 
 	// 5. Compute intent hash.
-	intentData, _ := os.ReadFile(applyIntentPath)
-	intentHash := apply.IntentHashFromBytes(intentData)
+	rawIntent, _ := os.ReadFile(applyIntentPath)
+	existing := store.GetNode(deployState, parsed.Name)
+	if parsed.Target.AutoPorts && existing != nil {
+		if len(parsed.Nodes) == 1 {
+			rawParsed, rawErr := intent.LoadRaw(applyIntentPath)
+			if rawErr != nil {
+				return exitWithError("VALIDATION_ERROR", output.ExitValidationError, rawErr.Error())
+			}
+			if len(rawParsed.Nodes) == 0 {
+				return exitWithError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node")
+			}
+			apply.RestoreAutoPorts(&parsed.Nodes[0], existing, &rawParsed.Nodes[0])
+		}
+	}
+	if len(parsed.Nodes) == 0 {
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node")
+	}
+	canonicalIntent, err := yaml.Marshal(parsed)
+	if err != nil {
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, "marshal effective intent: "+err.Error())
+	}
+	intentHash := apply.EffectiveIntentHash(canonicalIntent)
+	// Transitional compatibility for pre-v2 state; remove after migration in the next major.
+	legacyMatch := existing != nil && apply.LegacyIntentHashMatches(rawIntent, canonicalIntent, existing)
+	if legacyMatch {
+		// Preserve the recorded legacy hash for a true no-op. The next
+		// intentional change will write the versioned hash during apply.
+		intentHash = existing.IntentHash
+	}
 
 	// 6. HUMAN_REQUIRED gate. The internal/apply package handles the
 	// no-op short-circuit (same-hash → "no_change") on its own; we
 	// only need to guard the destructive change-on-existing-node case.
-	existing := store.GetNode(deployState, parsed.Name)
-	if existing != nil && existing.IntentHash != intentHash && !applyAutoApprove {
+	if existing != nil && existing.IntentHash != intentHash && !legacyMatch && !applyAutoApprove {
 		return exitWithError("HUMAN_REQUIRED", output.ExitHumanRequired,
 			fmt.Sprintf("Changes detected for node %q. Review with: trond plan --intent %s", parsed.Name, applyIntentPath),
 			"Re-run with --auto-approve to apply changes",
@@ -150,9 +175,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 		State:          deployState,
 		IntentHash:     intentHash,
 		Existing:       existing,
-		TemplateDir:    findTemplatesDir(),
+		TemplateDir:    apply.FindTemplatesDir(),
 		DeploymentsDir: deploymentsDir(),
-		EnvVars:        resolveEnvVars(&parsed.Nodes[0]),
+		EnvVars:        apply.ResolveEnvVars(&parsed.Nodes[0]),
 		IntentPath:     applyIntentPath, // FR-021: relative build.source resolves vs this
 		Wait:           applyWait,
 		WaitTimeout:    applyWaitTimeout,
@@ -212,34 +237,6 @@ func resolveTarget(parsed *intent.Intent) (target.Target, error) {
 	default:
 		return target.NewLocalTarget(), nil
 	}
-}
-
-func resolveEnvVars(node *intent.NodeSpec) map[string]string {
-	env := make(map[string]string)
-	if node.WitnessKeyEnv != "" {
-		val := os.Getenv(node.WitnessKeyEnv)
-		if val != "" {
-			env[node.WitnessKeyEnv] = val
-		}
-	}
-	return env
-}
-
-// findTemplatesDir returns an optional on-disk templates directory.
-// Empty return signals render to use the embedded copy.
-func findTemplatesDir() string {
-	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
-		return d
-	}
-	candidates := []string{"templates", "./templates"}
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			if _, err := os.Stat(c + "/main_net_config.conf"); err == nil {
-				return c
-			}
-		}
-	}
-	return ""
 }
 
 // exitWithError returns a StructuredError for propagation through cobra RunE.

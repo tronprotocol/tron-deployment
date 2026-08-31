@@ -23,6 +23,8 @@ type PortsChecker struct{}
 func (c *PortsChecker) Name() string { return "port_listening" }
 
 func (c *PortsChecker) Run(ctx context.Context, tgt target.Target, opts CheckOpts) CheckResult {
+	// Preserve the original semantics exactly: defaults apply only when
+	// BOTH ports are unset; a partially specified pair is checked as-is.
 	ports := []int{opts.HTTPPort, opts.GRPCPort}
 	if opts.HTTPPort == 0 && opts.GRPCPort == 0 {
 		ports = []int{8090, 50051}

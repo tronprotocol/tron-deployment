@@ -43,6 +43,11 @@
           },
           "labels":       { "type": "object", "additionalProperties": { "type": "string" } },
           "network":      { "type": "string" },
+          "intent_hash":  {
+            "type": "string",
+            "pattern": "^(v2:)?[0-9a-f]{64}$",
+            "description": "Versioned hash of the last applied intent (v2:<sha256>, legacy bare 64-hex accepted). Same value `trond status` reports; lets a harness detect config drift between manifest refreshes."
+          },
           "build_cache_key": { "type": "string", "description": "Content-addressed build cache key (source-built nodes only)." },
           "build_revision":  { "type": "string", "pattern": "^[0-9a-f]{12}$", "description": "Resolved source git revision (short) the node was built from (source-built nodes only)." },
           "monitoring": {

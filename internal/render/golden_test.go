@@ -60,9 +60,9 @@ func TestRenderHOCON_Golden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("RenderHOCON: %v", err)
 			}
-			memGB := ParseMemoryGB(node.Resources.Memory)
-			if memGB == 0 {
-				memGB = 16
+			memGB, err := ParseMemoryGB(node.Resources.Memory)
+			if err != nil {
+				t.Fatalf("ParseMemoryGB: %v", err)
 			}
 			jvmArgs := JVMArgsString(memGB, 17, node.JVM)
 			gotCompose := RenderCompose(parsed.Name, parsed, node, "", jvmArgs, "")

@@ -61,6 +61,7 @@ func TestSource_Resolve_DirtyWithUntracked(t *testing.T) {
 	if err := s1.Resolve(context.Background()); err != nil {
 		t.Fatalf("first Resolve: %v", err)
 	}
+	cleanHash := s1.PatchHash
 
 	// Add an untracked file. git diff returns empty here; trond MUST
 	// notice via git status --porcelain -uall.
@@ -79,6 +80,64 @@ func TestSource_Resolve_DirtyWithUntracked(t *testing.T) {
 	if s2.PatchHash == "" {
 		t.Fatal("dirty repo MUST have non-empty PatchHash")
 	}
+	if s2.PatchHash == cleanHash {
+		t.Fatal("adding an untracked file MUST change PatchHash")
+	}
+}
+
+func TestSource_Resolve_UntrackedContentChangesHash(t *testing.T) {
+	dir := initGitRepo(t)
+	path := filepath.Join(dir, "new.go")
+	if err := os.WriteFile(path, []byte("package first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first := resolveSource(t, dir).PatchHash
+	if err := os.WriteFile(path, []byte("package second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := resolveSource(t, dir).PatchHash
+	if first == second {
+		t.Fatalf("untracked content change did not change hash: %q", first)
+	}
+}
+
+func TestSource_Resolve_NoUntrackedHashUnchanged(t *testing.T) {
+	dir := initGitRepo(t)
+	first := resolveSource(t, dir).PatchHash
+	second := resolveSource(t, dir).PatchHash
+	if first != second || first != "" {
+		t.Fatalf("clean hash changed: %q then %q", first, second)
+	}
+}
+
+func TestSource_Resolve_IgnoredUntrackedDoesNotChangeHash(t *testing.T) {
+	dir := initGitRepo(t)
+	var baseline string
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", ".gitignore")
+	mustGit(t, dir, "commit", "-m", "ignore generated files")
+	baseline = resolveSource(t, dir).PatchHash
+	if err := os.Mkdir(filepath.Join(dir, "ignored"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ignored", "output.bin"), []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveSource(t, dir).PatchHash
+	if got != baseline {
+		t.Fatalf("ignored file changed hash: %q then %q", baseline, got)
+	}
+}
+
+func resolveSource(t *testing.T, dir string) Source {
+	t.Helper()
+	s := Source{Path: dir, RevisionSpec: "HEAD"}
+	if err := s.Resolve(context.Background()); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	return s
 }
 
 func TestSource_Resolve_DirtyTrackedEdit(t *testing.T) {

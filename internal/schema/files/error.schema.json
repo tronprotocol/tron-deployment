@@ -30,6 +30,10 @@
       "type": "object",
       "description": "Optional command-specific structured context (e.g., which intent field failed validation).",
       "additionalProperties": true
+    },
+    "artifact_swapped": {
+      "type": "boolean",
+      "description": "Upgrade artifact was activated before a later error; the parent should include the node in its rollback set."
     }
   }
 }

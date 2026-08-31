@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -161,8 +164,21 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return output.NewError("JOB_NOT_FOUND", output.ExitGeneralError, "no such job: "+id)
 	}
 	if !snapshot.IsRunning(job.PID) {
-		fmt.Printf("Job %s already stopped (pid %d).\n", id, job.PID)
+		// ESRCH means the recorded process is gone. Remove stale bookkeeping;
+		// unlike an identity mismatch, there is no live process to protect.
+		if err := snapshot.RemoveJob(paths.SnapshotJobs(), id); err != nil {
+			return output.NewError("STOP_ERROR", output.ExitGeneralError, err.Error())
+		}
+		fmt.Printf("Job %s already stopped (pid %d); removed stale manifest.\n", id, job.PID)
 		return nil
+	}
+	if ok, err := snapshotProcessIdentity(job.PID); err != nil || !ok {
+		message := fmt.Sprintf("refusing to signal pid %d: process identity does not match snapshot download", job.PID)
+		if err != nil {
+			message = fmt.Sprintf("%s (%v)", message, err)
+		}
+		return output.NewError("PROCESS_IDENTITY_MISMATCH", output.ExitGeneralError, message).
+			WithSuggestions("Run: trond snapshot jobs to verify the recorded process")
 	}
 	sig := syscall.SIGTERM
 	if stopForce {
@@ -177,6 +193,36 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Sent %s to job %s (pid %d).\n", sig, id, job.PID)
 	return nil
+}
+
+// snapshotProcessIdentity verifies the live PID still belongs to the detached
+// trond snapshot download. This check is intentionally immediately before
+// Signal; PID reuse between the check and signal remains a small unavoidable
+// TOCTOU window, but an unrelated live PID is never signalled blindly.
+func snapshotProcessIdentity(pid int) (bool, error) {
+	var argv []string
+	if data, err := os.ReadFile(filepath.Join("/proc", fmt.Sprint(pid), "cmdline")); err == nil {
+		for _, arg := range strings.Split(string(data), "\x00") {
+			if arg != "" {
+				argv = append(argv, arg)
+			}
+		}
+	} else {
+		out, psErr := exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "command=").Output()
+		if psErr != nil {
+			return false, psErr
+		}
+		argv = strings.Fields(strings.TrimSpace(string(out)))
+	}
+	if len(argv) == 0 || !strings.Contains(argv[0], "trond") {
+		return false, nil
+	}
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "snapshot" && argv[i+1] == "download" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func truncate(s string, n int) string {

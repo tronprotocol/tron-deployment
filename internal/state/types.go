@@ -7,10 +7,11 @@ import (
 
 // ManagedNode represents a deployed node tracked in the state file.
 type ManagedNode struct {
-	Name       string `json:"name"`
-	IntentHash string `json:"intent_hash"`
-	ConfigHash string `json:"config_hash"`
-	Version    string `json:"version"`
+	Name           string `json:"name"`
+	IntentHash     string `json:"intent_hash"`
+	ConfigHash     string `json:"config_hash"`
+	Version        string `json:"version"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
 	// Network is the intent's `network:` value (mainnet | nile | private)
 	// recorded at apply time, so `status` can report it and derive the
 	// `is_private` safety fact without re-reading the intent. omitempty:
@@ -24,12 +25,16 @@ type ManagedNode struct {
 	ComposePath     string     `json:"compose_path,omitempty"`
 	SystemdUnit     string     `json:"systemd_unit,omitempty"`
 	InstallPath     string     `json:"install_path,omitempty"`
+	StorageRoot     string     `json:"storage_root,omitempty"`
 	// HTTPPort and GRPCPort capture the API ports as configured at deploy time
 	// so probe commands (health, diagnose, verify) can target the right port
 	// without re-reading the intent file. Older state files predate these
 	// fields — callers must fall back to defaults when zero.
-	HTTPPort int `json:"http_port,omitempty"`
-	GRPCPort int `json:"grpc_port,omitempty"`
+	HTTPPort         int `json:"http_port,omitempty"`
+	GRPCPort         int `json:"grpc_port,omitempty"`
+	SolidityHTTPPort int `json:"solidity_http_port,omitempty"`
+	SolidityGRPCPort int `json:"solidity_grpc_port,omitempty"`
+	JSONRPCPort      int `json:"jsonrpc_port,omitempty"`
 	// P2PPort is the listen.port a sibling can dial to peer with this node.
 	// `network add` reads it from every existing entry to populate the new
 	// node's active_peers so it can immediately join the P2P mesh.

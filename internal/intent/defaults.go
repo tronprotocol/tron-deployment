@@ -199,11 +199,11 @@ func applyNodeDefaults(node *NodeSpec) {
 	if node.Version == "" {
 		node.Version = "latest"
 	}
-	// Skip the default Image when a Build block is present — they're
+	// Skip the default Image when a Build or Jar block is present — they're
 	// mutually exclusive (FR-005). Otherwise the mutex check would
 	// fail on re-validation post-defaults, and worse: a docker
 	// runtime would try to pull an image trond doesn't intend to use.
-	if node.Image == "" && node.Build == nil {
+	if node.Image == "" && node.Build == nil && node.Jar == nil {
 		node.Image = "tronprotocol/java-tron"
 	}
 	if node.InstallPath == "" {

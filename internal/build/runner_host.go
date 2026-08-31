@@ -185,8 +185,23 @@ func runGradleHost(ctx context.Context, r *resolved) error {
 // uses, so semantics line up across builders: an `org.gradle.project.*`
 // override or a whitelisted KEY=VALUE flows through identically.
 func hostBuildEnv(intent map[string]string) []string {
-	base := os.Environ()
-	return append(base, allowedEnvPassthrough(intent)...)
+	values := make(map[string]string)
+	for _, entry := range os.Environ() {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			values[key] = value
+		}
+	}
+	for _, entry := range allowedEnvPassthrough(intent) {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			values[key] = value
+		}
+	}
+	merged := make([]string, 0, len(values))
+	for key, value := range values {
+		merged = append(merged, key+"="+value)
+	}
+	sort.Strings(merged)
+	return merged
 }
 
 // findLargestFatJAR walks the source tree for jars whose IMMEDIATE

@@ -11,11 +11,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/diagnosis"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
+
+var diagnoseCheckers = diagnosis.AllCheckers
 
 // registerDiagnosticTools wires up read-only triage tools. Pure-data
 // when possible; light HTTP probes where the data only exists at
@@ -119,10 +122,7 @@ func doctorStateFile() map[string]any {
 	}
 	st, err := store.Load()
 	if err != nil {
-		return map[string]any{
-			"name": "state.json", "status": "fail",
-			"message": "parse: " + err.Error(),
-		}
+		return map[string]any{"name": "state.json", "status": "fail", "message": "parse: " + err.Error()}
 	}
 	return map[string]any{
 		"name":    "state.json",
@@ -154,11 +154,7 @@ func doctorDockerCLI(ctx context.Context) map[string]any {
 }
 
 func healthTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*mcp.CallToolResult, any, error) {
-	store, err := state.NewStore(paths.State())
-	if err != nil {
-		return errResult(err)
-	}
-	st, err := store.Load()
+	store, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
@@ -166,19 +162,16 @@ func healthTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*mcp
 	if node == nil {
 		return errResult(notFound("health", args.Name))
 	}
-	port := node.HTTPPort
-	if port == 0 {
-		port = 8090
-	}
+	port := apply.PortOrDefault(node.HTTPPort, 8090)
 	// The probe URL stays on loopback: target.HTTPClient dials through the
 	// SSH tunnel, which lands on the remote host's loopback.
-	url := httpURL("127.0.0.1", port) + "/wallet/getnowblock"
-	endpoint := httpURL(target.EndpointHost(node.Target.Type, node.Target.Host), port) + "/wallet/getnowblock"
+	url := apply.ProbeURL(port, "/wallet/getnowblock")
+	endpoint := apply.HTTPURL(target.EndpointHost(node.Target.Type, node.Target.Host), port) + "/wallet/getnowblock"
 
 	// Probe through the node's target (SSH-tunnelled for remote nodes),
 	// not via http.DefaultClient against this host's loopback — that
 	// bypassed SSH entirely and always failed for remote rigs.
-	tgt, err := mcpResolveTargetFromNode(node)
+	tgt, err := target.FromManagedNode(node)
 	if err != nil {
 		return errResult(err)
 	}
@@ -217,11 +210,7 @@ func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*m
 	// `trond diagnose <name>` does, by reaching into
 	// internal/diagnosis directly. The earlier MCP version returned
 	// only a state-only subset; that gap is now closed.
-	store, err := state.NewStore(paths.State())
-	if err != nil {
-		return errResult(err)
-	}
-	st, err := store.Load()
+	store, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
@@ -230,7 +219,7 @@ func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*m
 		return errResult(notFound("diagnose", args.Name))
 	}
 
-	tgt, err := mcpResolveTargetFromNode(node)
+	tgt, err := target.FromManagedNode(node)
 	if err != nil {
 		return errResult(err)
 	}
@@ -240,12 +229,13 @@ func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*m
 
 	opts := diagnosis.CheckOpts{
 		NodeName: node.Name,
+		Network:  node.Network,
 		Runtime:  node.Runtime,
 		HTTPPort: node.HTTPPort,
 		GRPCPort: node.GRPCPort,
 	}
 
-	checkers := diagnosis.AllCheckers()
+	checkers := diagnoseCheckers()
 	results := make([]diagnosis.CheckResult, 0, len(checkers))
 	for _, c := range checkers {
 		results = append(results, c.Run(ctx, tgt, opts))

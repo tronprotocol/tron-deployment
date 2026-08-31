@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/tronprotocol/tron-deployment/internal/paths"
 )
 
 const stateFileVersion = 1
@@ -15,14 +17,10 @@ type Store struct {
 }
 
 // NewStore creates a state store at the given path.
-// If path is empty, defaults to ~/.trond/state.json.
+// If path is empty, uses paths.State().
 func NewStore(path string) (*Store, error) {
 	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("get home dir: %w", err)
-		}
-		path = filepath.Join(home, ".trond", "state.json")
+		path = paths.State()
 	}
 
 	// Ensure directory exists
@@ -69,22 +67,31 @@ func (s *Store) Save(state *DeploymentState) error {
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	// Atomic write: write to a temp file then rename. The temp name is
-	// unique per call — a fixed ".tmp" is shared by concurrent writers,
-	// which then overwrite each other's half-written file and rename
-	// whatever is left, so the rename stops being atomic in practice.
+	// Atomic write: write to a unique temp file, fsync, then rename. The
+	// temp name is unique per call — a fixed ".tmp" is shared by concurrent
+	// writers, which then overwrite each other's half-written file and
+	// rename whatever is left, so the rename stops being atomic in practice.
+	// Save guarantees complete file contents; lost-update protection between
+	// concurrent writers comes from the caller holding state.lock.
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp*")
 	if err != nil {
 		return fmt.Errorf("create state temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		cleanup()
 		return fmt.Errorf("write state temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync state temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close state temp file: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0600); err != nil {
@@ -93,12 +100,34 @@ func (s *Store) Save(state *DeploymentState) error {
 	}
 
 	if err := os.Rename(tmpPath, s.path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename state file: %w", err)
+	}
+	// Sync the directory entry so a crash after rename cannot lose the name.
+	dir, err := openStateDir(filepath.Dir(s.path))
+	if err != nil {
+		return fmt.Errorf("open state directory: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		// The file was atomically renamed after its contents were synced.
+		// Directory fsync is unavailable on Windows, so this best-effort
+		// durability step is non-fatal once rename has succeeded.
+		return nil
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close state directory: %w", err)
 	}
 
 	return nil
 }
+
+type stateDir interface {
+	Sync() error
+	Close() error
+}
+
+var openStateDir = func(path string) (stateDir, error) { return os.Open(path) }
 
 // GetNode returns the managed node by name, or nil if not found.
 func (s *Store) GetNode(state *DeploymentState, name string) *ManagedNode {

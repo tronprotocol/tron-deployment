@@ -84,6 +84,13 @@ func (r *Replayer) Run(ctx context.Context) error {
 				"check %s for failure details", r.state.LastMainnetBlock, n, r.cfg.FailLog)
 			return err
 		}
+		if ctx.Err() != nil {
+			r.state.InProgressTxIndex = 0
+			if flushErr := r.flushState(); flushErr != nil {
+				log.Printf("save state failed: %v", flushErr)
+			}
+			return ctx.Err()
+		}
 		// One flush atomically clears the in-progress markers and advances
 		// LastMainnetBlock, so "block done" is a single atomic event. If a
 		// SIGKILL lands between the two writes, the next start enters
@@ -157,14 +164,13 @@ func (r *Replayer) resolveStartBlock(_ context.Context) (int64, error) {
 //   - Total timer invocations: `slots` (typically 3-9), not `n` (typically 150).
 //
 // On fetch failure we still wait for the full paceTotal to keep the
-// schedule steady. Empty blocks / non-existent blocks return immediately
-// without burning the full pace so replay advances faster.
+// schedule steady, then abort without advancing the cursor. Empty blocks /
+// non-existent blocks return immediately without burning the full pace.
 //
 // Returns (blockOk, blockFail, blockSkip, err).
-// err is non-nil iff this block attempted broadcasts (attempted > 0) and
-// all of them failed (ok == 0). In that case the caller (Run) should
-// stop the service to avoid blindly advancing state while the private
-// chain is in a bad state.
+// err is non-nil for fetch failures, cancellation, or any failed broadcast.
+// In each case the caller (Run) must stop before advancing state so an
+// interrupted or incomplete block is retried on the next run.
 func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, int64, error) {
 	blockStart := time.Now()
 
@@ -180,9 +186,12 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
 
 	blk, err := r.trongrid.getBlock(ctx, num)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, 0, 0, ctx.Err()
+		}
 		log.Printf("block %d fetch failed: %v", num, err)
 		r.waitUntil(ctx, blockStart.Add(paceTotal))
-		return 0, 0, 0, nil // fetch failure is a TronGrid-side issue; not "all-fail", continue
+		return 0, 0, 0, fmt.Errorf("block %d fetch failed: %w", num, err)
 	}
 	if blk == nil {
 		log.Printf("block %d not found", num)
@@ -232,7 +241,7 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
 				return atomic.LoadInt64(&r.state.TotalBroadcastOk) - okBefore,
 					atomic.LoadInt64(&r.state.TotalBroadcastFail) - failBefore,
 					atomic.LoadInt64(&r.state.TotalSkipped) - skipBefore,
-					nil
+					ctx.Err()
 			default:
 			}
 			r.processTx(ctx, num, blk.Transactions[idx])
@@ -266,7 +275,7 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
 					return atomic.LoadInt64(&r.state.TotalBroadcastOk) - okBefore,
 						atomic.LoadInt64(&r.state.TotalBroadcastFail) - failBefore,
 						atomic.LoadInt64(&r.state.TotalSkipped) - skipBefore,
-						nil
+						ctx.Err()
 				default:
 				}
 				r.processTx(ctx, num, blk.Transactions[idx])
@@ -286,12 +295,12 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
 	blockFail := atomic.LoadInt64(&r.state.TotalBroadcastFail) - failBefore
 	blockSkip := atomic.LoadInt64(&r.state.TotalSkipped) - skipBefore
 
-	// If we attempted broadcasts (blockFail > 0) and all of them failed
-	// (blockOk == 0), trigger a shutdown. Skipped txs (VoteWitness etc.)
-	// are excluded because we never attempted to broadcast them.
-	if ctx.Err() == nil && blockFail > 0 && blockOk == 0 {
+	// Any failed broadcast means the block is incomplete. Do not advance the
+	// mainnet cursor: a retry must replay from the durable block boundary.
+	// Skipped txs (VoteWitness etc.) are excluded because they are intentional.
+	if ctx.Err() == nil && blockFail > 0 {
 		return blockOk, blockFail, blockSkip,
-			fmt.Errorf("block %d: all %d broadcast attempts failed", num, blockFail)
+			fmt.Errorf("block %d: %d broadcast attempts failed", num, blockFail)
 	}
 	return blockOk, blockFail, blockSkip, nil
 }

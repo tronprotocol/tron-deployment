@@ -1,5 +1,18 @@
-//go:build e2e
-
+// Package-level tests guarding the AGENTS.md agent contract.
+//
+// NOTE: this file intentionally has NO //go:build e2e tag — it runs in
+// the DEFAULT test suite (moved out of the e2e tag in 3d8943b "close
+// local gate gaps") so AGENTS.md doc rot (renamed commands, drifted
+// output fields) is caught by the ordinary CI "Test + coverage" job and
+// local `go test ./...`, not only when someone runs -tags=e2e.
+//
+// Cost/hermeticity caveat: TestE2E_AgentsMD_OutputFieldsExist is NOT
+// fully hermetic — it builds the trond binary once per package run via
+// e2eEnv and executes a small set of read-only commands (version,
+// doctor, snapshot sources, recipe list, network status, list). Command
+// failures are Skip, not Fail, and no Docker/network is required. Keep
+// any new test in this file equally cheap and skip-tolerant; tests that
+// need Docker or a deployed node belong in a //go:build e2e file.
 package cmd
 
 import (

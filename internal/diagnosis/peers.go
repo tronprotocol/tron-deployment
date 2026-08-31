@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
@@ -15,11 +16,7 @@ type PeersChecker struct{}
 func (c *PeersChecker) Name() string { return "peer_count" }
 
 func (c *PeersChecker) Run(ctx context.Context, tgt target.Target, opts CheckOpts) CheckResult {
-	if opts.HTTPPort == 0 {
-		opts.HTTPPort = 8090
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/wallet/listnodes", opts.HTTPPort)
+	url := apply.ProbeURL(opts.HTTPPort, "/wallet/listnodes")
 	out, err := target.Get(ctx, tgt, url, 5*time.Second)
 	if err != nil {
 		return CheckResult{

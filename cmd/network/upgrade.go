@@ -1,19 +1,26 @@
 package network
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/tronprotocol/tron-deployment/internal/guard"
+	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/state"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // upgradeCmd does a rolling upgrade across every node in a private
@@ -66,6 +73,8 @@ var (
 	upgradeWitnessFirst  bool
 	upgradeVerifyTimeout time.Duration
 	upgradeIntentPath    string
+	upgradeJarURL        string
+	upgradeJarSHA256     string
 )
 
 func init() {
@@ -79,6 +88,8 @@ func init() {
 		"Per-node verify timeout passed through to `trond verify`")
 	upgradeCmd.Flags().StringVar(&upgradeIntentPath, "intent", "",
 		"Path to the original intent.yaml used by `network create` (required for verify)")
+	upgradeCmd.Flags().StringVar(&upgradeJarURL, "jar-url", "", "Target-version JAR URL (jar runtime)")
+	upgradeCmd.Flags().StringVar(&upgradeJarSHA256, "jar-sha256", "", "Optional target-version JAR SHA256 (jar runtime)")
 	if err := upgradeCmd.MarkFlagRequired("version"); err != nil {
 		panic(err)
 	}
@@ -151,7 +162,14 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 	for _, node := range order {
 		stepStart := time.Now()
-		err := runChild(cmd.Context(), exe, "upgrade", node, "--version", upgradeVersion, "--auto-approve")
+		upgradeArgs := []string{"upgrade", node, "--version", upgradeVersion}
+		if upgradeJarURL != "" {
+			upgradeArgs = append(upgradeArgs, "--jar-url", upgradeJarURL)
+		}
+		if upgradeJarSHA256 != "" {
+			upgradeArgs = append(upgradeArgs, "--jar-sha256", upgradeJarSHA256)
+		}
+		err, artifactSwapped := runNetworkChildResultFn(cmd.Context(), exe, st, node, upgradeArgs...)
 		steps = append(steps, upgradeStep{
 			Node:       node,
 			Phase:      "upgrade",
@@ -160,14 +178,21 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 			Error:      errString(err),
 		})
 		if err != nil {
-			return finishWithFailure(cmd.Context(), outputFmt, networkName, exe,
+			// Rollback membership tracks mutation, not child exit status: a child
+			// can swap its artifact and then fail while refreshing or persisting state.
+			if artifactSwapped {
+				upgraded = append(upgraded, node)
+			}
+			return finishWithFailure(cmd.Context(), outputFmt, networkName, exe, st,
 				steps, upgraded, start, node, err)
 		}
+		// The artifact has been changed successfully. Keep this node in the
+		// rollback set before verification: a failed health check still means
+		// this node was mutated and must be restored by --auto-rollback.
+		upgraded = append(upgraded, node)
 
 		stepStart = time.Now()
-		err = runChild(cmd.Context(), exe, "verify",
-			"--intent", upgradeIntentPath,
-			"--timeout", upgradeVerifyTimeout.String())
+		err = verifyNode(cmd.Context(), exe, node, upgradeIntentPath, upgradeVerifyTimeout)
 		steps = append(steps, upgradeStep{
 			Node:       node,
 			Phase:      "verify",
@@ -176,11 +201,10 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 			Error:      errString(err),
 		})
 		if err != nil {
-			return finishWithFailure(cmd.Context(), outputFmt, networkName, exe,
+			return finishWithFailure(cmd.Context(), outputFmt, networkName, exe, st,
 				steps, upgraded, start, node, err)
 		}
 
-		upgraded = append(upgraded, node)
 	}
 
 	result := map[string]any{
@@ -191,6 +215,9 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		"steps":          steps,
 		"duration_ms":    time.Since(start).Milliseconds(),
 		"status":         "success",
+	}
+	if warnings := cleanupNetworkBackups(cmd.Context(), st, upgraded); len(warnings) > 0 {
+		result["warnings"] = warnings
 	}
 	if outputFmt == "json" {
 		return output.WriteJSON(os.Stdout, result)
@@ -233,12 +260,170 @@ func isWitnessNode(n state.ManagedNode) bool {
 	return strings.Contains(strings.ToLower(n.Name), "witness")
 }
 
-func runChild(ctx context.Context, exe string, argv ...string) error {
+var runChild = runChildCommand
+var runChildResult = runChildCommandWithResult
+var runChildWithEnvResult = runChildCommandWithEnvResult
+var runNetworkChildResultFn = runNetworkChildResult
+
+const (
+	networkUpgradeRestoreEnv  = "TROND_NETWORK_UPGRADE=1"
+	networkUpgradePreserveEnv = "TROND_PRESERVE_BACKUP=1"
+	networkUpgradeTargetEnv   = "TROND_NETWORK_UPGRADE_TARGET_VERSION"
+	networkUpgradePreviousEnv = "TROND_NETWORK_UPGRADE_PREVIOUS_VERSION"
+)
+
+// rollbackChildEnv carries the node metadata from immediately before the
+// attempted upgrade into the rollback child. The parent state is intentionally
+// not mutated during the network upgrade, so these are the pre-attempt values.
+func rollbackChildEnv(n *state.ManagedNode) []string {
+	return []string{
+		networkUpgradeRestoreEnv,
+		networkUpgradeTargetEnv + "=" + n.Version,
+		networkUpgradePreviousEnv + "=" + n.PreviousVersion,
+	}
+}
+
+func runChildCommand(ctx context.Context, exe string, argv ...string) error {
+	err, _ := runChildCommandWithEnvResult(ctx, exe, nil, argv...)
+	return err
+}
+
+func runChildCommandWithResult(ctx context.Context, exe string, argv ...string) (error, bool) {
+	return runChildCommandWithEnvResult(ctx, exe, nil, argv...)
+}
+
+func runChildCommandWithEnvResult(ctx context.Context, exe string, extraEnv []string, argv ...string) (error, bool) {
 	argv = append(argv, "--output", "json")
 	cmd := exec.CommandContext(ctx, exe, argv...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if len(extraEnv) > 0 {
+		cmd.Env = childEnv(extraEnv)
+	}
+	var stdout, stderr limitedBuffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	artifactSwapped := false
+	// Errors are emitted on stderr by the root command, while successful
+	// results are emitted on stdout. Parse both so upgrade failures can report
+	// whether the artifact was already activated. Malformed/absent envelopes
+	// conservatively exclude the node from rollback; this is residual risk.
+	envelope := stdout.Bytes()
+	if runErr != nil {
+		envelope = stderr.Bytes()
+	}
+	lines := bytes.Split(envelope, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		var value map[string]any
+		if json.Unmarshal(bytes.TrimSpace(lines[i]), &value) == nil {
+			if _, ok := value["error_code"]; ok {
+				artifactSwapped, _ = value["artifact_swapped"].(bool)
+				break
+			}
+		}
+	}
+	if runErr != nil {
+		if stderr.Len() > 0 {
+			suffix := ""
+			if stderr.limited || stderr.total > 1<<20 || stderr.Len() >= 1<<20 {
+				suffix = " [truncated at 1MiB]"
+			}
+			text := stderr.String()
+			if (stderr.limited || stderr.total > 1<<20 || stderr.Len() >= 1<<20) && len(text) > 256 {
+				text = text[:256]
+			}
+			return fmt.Errorf("child command failed: %w: %s%s", runErr, text, suffix), artifactSwapped
+		}
+		return runErr, artifactSwapped
+	}
+	var value any
+	if err := json.Unmarshal(stdout.Bytes(), &value); err != nil {
+		return fmt.Errorf("child command returned invalid JSON: %w", err), false
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return fmt.Errorf("child command returned JSON that is not an object"), false
+	}
+	if stdout.limited || stderr.limited {
+		return fmt.Errorf("child command output exceeds 1MiB limit"), false
+	}
+	return nil, artifactSwapped
+}
+
+func childEnv(extraEnv []string) []string {
+	baseEnv := make([]string, 0, len(os.Environ())+len(extraEnv))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "TROND_NETWORK_UPGRADE", networkUpgradeTargetEnv, networkUpgradePreviousEnv, "TROND_PRESERVE_BACKUP":
+			continue
+		}
+		baseEnv = append(baseEnv, entry)
+	}
+	return append(baseEnv, extraEnv...)
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	limited bool
+	total   int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	const max = 1 << 20
+	b.total += len(p)
+	if b.total > max {
+		b.limited = true
+	}
+	if b.Len() >= max {
+		b.limited = true
+		return len(p), nil
+	}
+	if len(p) > max-b.Len() {
+		_, _ = b.Buffer.Write(p[:max-b.Len()])
+		b.limited = true
+		return len(p), nil
+	}
+	return b.Buffer.Write(p)
+}
+
+// verifyNode projects the multi-node intent to the node being upgraded before
+// invoking the existing single-node verify command. Verify reads Nodes[0], so
+// passing the original multi-node intent would silently verify only node 0.
+func verifyNode(ctx context.Context, exe, node, intentPath string, timeout time.Duration) error {
+	parsed, err := intent.Load(intentPath)
+	if err != nil {
+		return fmt.Errorf("load verify intent: %w", err)
+	}
+	var projected *intent.Intent
+	for i := range parsed.Nodes {
+		if fmt.Sprintf("%s-node%d", parsed.Name, i) == node {
+			projected, _, _, err = nodeIntent(parsed, i)
+			if err != nil {
+				return fmt.Errorf("project node %s for verify: %w", node, err)
+			}
+			break
+		}
+	}
+	if projected == nil {
+		return fmt.Errorf("node %q is not present in verify intent", node)
+	}
+	data, err := yaml.Marshal(projected)
+	if err != nil {
+		return fmt.Errorf("marshal verify intent for %s: %w", node, err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(intentPath), ".trond-verify-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create verify intent for %s: %w", node, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write verify intent for %s: %w", node, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close verify intent for %s: %w", node, err)
+	}
+	return runChild(ctx, exe, "verify", "--intent", tmpPath, "--timeout", timeout.String())
 }
 
 func statusFor(err error) string {
@@ -260,12 +445,13 @@ func errString(err error) string {
 // step appended; otherwise the operator is told which nodes need
 // manual rollback.
 func finishWithFailure(ctx context.Context, outputFmt, networkName, exe string,
+	st *state.DeploymentState,
 	steps []upgradeStep, upgraded []string, start time.Time, failedNode string, failErr error) error {
 	rolledBack := make([]string, 0, len(upgraded))
 	if upgradeAutoRollback {
 		for _, node := range upgraded {
 			stepStart := time.Now()
-			err := runChild(ctx, exe, "rollback", node)
+			err := runNetworkChild(ctx, exe, st, node, "rollback", node)
 			steps = append(steps, upgradeStep{
 				Node:       node,
 				Phase:      "rollback",
@@ -311,4 +497,62 @@ func finishWithFailure(ctx context.Context, outputFmt, networkName, exe string,
 		)
 	}
 	return se
+}
+
+func runNetworkChild(ctx context.Context, exe string, st *state.DeploymentState, node string, argv ...string) error {
+	err, _ := runNetworkChildResult(ctx, exe, st, node, argv...)
+	return err
+}
+
+func runNetworkChildResult(ctx context.Context, exe string, st *state.DeploymentState, node string, argv ...string) (error, bool) {
+	if st != nil {
+		for _, n := range st.Nodes {
+			if n.Name != node || n.Runtime != "jar" || len(argv) == 0 {
+				continue
+			}
+			switch argv[0] {
+			case "rollback":
+				return runChildWithEnvResult(ctx, exe, rollbackChildEnv(&n), argv...)
+			case "upgrade":
+				return runChildWithEnvResult(ctx, exe, []string{networkUpgradePreserveEnv}, argv...)
+			}
+		}
+	}
+	return runChildResult(ctx, exe, argv...)
+}
+
+var fromManagedNode = target.FromManagedNode
+
+func cleanupNetworkBackup(ctx context.Context, st *state.DeploymentState, node string) error {
+	var managedNode *state.ManagedNode
+	for i := range st.Nodes {
+		if st.Nodes[i].Name == node && st.Nodes[i].Runtime == "jar" {
+			managedNode = &st.Nodes[i]
+			break
+		}
+	}
+	if managedNode == nil {
+		return nil
+	}
+
+	path := filepath.Join(managedNode.InstallPath, "FullNode.jar.upgrade.backup")
+	tgt, err := fromManagedNode(managedNode)
+	if err != nil {
+		return err
+	}
+	if closer, ok := tgt.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	_, err = tgt.Exec(ctx, "rm", "-f", "--", path)
+	return err
+}
+
+func cleanupNetworkBackups(ctx context.Context, st *state.DeploymentState, nodes []string) []string {
+	var warnings []string
+	for _, node := range nodes {
+		if err := cleanupNetworkBackup(ctx, st, node); err != nil {
+			warnings = append(warnings, fmt.Sprintf("failed to remove upgrade backup for %s: %v", node, err))
+		}
+	}
+	return warnings
 }

@@ -1,9 +1,9 @@
 {
-  "schema_version": "1.16.0",
+  "schema_version": "1.16.2",
   "entries": [
     {
       "name": "apply",
-      "hash": "130a8b784a5f3d288b0c6cced8746be52434ffb9de40a8915a3e65ba2695d156"
+      "hash": "f700be42619e66768a11dc8ecc7505076a6b151beca7014e833b3972a8431a1c"
     },
     {
       "name": "auto-heal",
@@ -47,11 +47,11 @@
     },
     {
       "name": "error",
-      "hash": "64d75337eb0c375f14ba1ccbe51519be1ca8a5b02b6b053fc13934f72a227e36"
+      "hash": "a9d401f0ca83aa7bd4b3b14038a3e7d3f3dd55da44371d7ca6a6e1d95aa7d1e7"
     },
     {
       "name": "events",
-      "hash": "6f192c6454758b89fc087087bcb6a1e5ff35412f383889daea3775b7ae31f81b"
+      "hash": "90d4d2509307876a3a1c69ac6ecaec51532679006f148a44c2aa079cd97421f7"
     },
     {
       "name": "health",
@@ -59,7 +59,7 @@
     },
     {
       "name": "inspect",
-      "hash": "9e200ee43a9fa62b29f43d576672af6a4c033cd1fee07a410b5d012229786482"
+      "hash": "0004b2d5e75241fc6a39a0d54e17fe3f0c1ee92782d1b0657d58a06f047824be"
     },
     {
       "name": "list",
@@ -127,7 +127,7 @@
     },
     {
       "name": "status",
-      "hash": "cf12a8dd02e89813be667a722c2295466c830483a4f2ad547314fda3f096556f"
+      "hash": "6456d7a3b7c5da8862329ec08d672293fe8aefad130ef6a8900669997a3608ee"
     },
     {
       "name": "verify",

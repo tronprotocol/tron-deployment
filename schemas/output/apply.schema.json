@@ -24,8 +24,8 @@
     },
     "intent_hash": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "SHA256 of the intent file contents. Used by the next apply to detect changes."
+      "pattern": "^(v2:)?[0-9a-f]{64}$",
+      "description": "Versioned SHA256 of the fully resolved intent; bare SHA256 is accepted for legacy state during migration."
     },
     "config_hash": {
       "type": "string",

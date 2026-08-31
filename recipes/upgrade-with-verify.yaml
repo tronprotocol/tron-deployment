@@ -29,7 +29,7 @@ params:
       `trond verify` needs it to know which port to probe.
 
 steps:
-  - id: pre-upgrade-status
+  - id: pre_upgrade_status
     description: Snapshot current state for the run record.
     command: status
     args:

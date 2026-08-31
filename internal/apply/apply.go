@@ -258,7 +258,8 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 	// intent hash alone (legacy behavior preserved).
 	if node.Build == nil &&
 		opts.Existing != nil && opts.Existing.IntentHash == opts.IntentHash {
-		return noChangeResult(opts, nil, start), nil
+		remediateJarConfigPermissions(ctx, opts, node)
+		return noChangeResult(opts, nil, start)
 	}
 
 	// Resolve build before render. The artifact path it produces
@@ -278,7 +279,8 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		opts.Existing.IntentHash == opts.IntentHash &&
 		buildSummary != nil &&
 		opts.Existing.BuildCacheKey == buildSummary.CacheKey {
-		return noChangeResult(opts, buildSummary, start), nil
+		remediateJarConfigPermissions(ctx, opts, node)
+		return noChangeResult(opts, buildSummary, start)
 	}
 
 	rendered, err := render.RenderHOCONWithSecrets(opts.TemplateDir, opts.Intent, node)
@@ -295,9 +297,9 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 	if jdk == 0 {
 		jdk = detectJDK(ctx, opts.Target)
 	}
-	memGB := render.ParseMemoryGB(node.Resources.Memory)
-	if memGB == 0 {
-		memGB = 16
+	memGB, err := render.ParseMemoryGB(node.Resources.Memory)
+	if err != nil {
+		return nil, fmt.Errorf("invalid resources.memory %q: %w", node.Resources.Memory, err)
 	}
 	jvmArgs := render.JVMArgsString(memGB, jdk, node.JVM)
 
@@ -318,6 +320,7 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		ConfigData: []byte(hocon),
 		EnvVars:    opts.EnvVars,
 	}
+	artifactSHA256 := ""
 
 	switch runtimeType {
 	case "docker":
@@ -348,6 +351,9 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		// JarPath still points at the install_path location for `mkdir -p` /
 		// config layout; only the systemd ExecStart references jarPath above.
 		deployOpts.JarPath = filepath.Join(node.InstallPath, "FullNode.jar")
+		if opts.Existing != nil {
+			deployOpts.ArtifactSHA256 = opts.Existing.ArtifactSHA256
+		}
 		if node.Jar != nil {
 			deployOpts.JarURL = node.Jar.URL
 			deployOpts.JarSHA256 = node.Jar.SHA256
@@ -355,6 +361,9 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		rt := runtime.NewJarRuntime(opts.Target)
 		if err := rt.Deploy(ctx, deployOpts); err != nil {
 			return nil, fmt.Errorf("jar deploy: %w", err)
+		}
+		if digest, err := opts.Target.Sha256IfExists(ctx, deployOpts.JarPath); err == nil {
+			artifactSHA256 = digest
 		}
 	default:
 		return nil, fmt.Errorf("unsupported runtime %q", runtimeType)
@@ -365,11 +374,12 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 
 	// Persist into state.
 	managed := state.ManagedNode{
-		Name:       opts.Intent.Name,
-		IntentHash: opts.IntentHash,
-		ConfigHash: configHash,
-		Version:    node.Version,
-		Network:    opts.Intent.Network,
+		Name:           opts.Intent.Name,
+		IntentHash:     opts.IntentHash,
+		ConfigHash:     configHash,
+		Version:        node.Version,
+		ArtifactSHA256: artifactSHA256,
+		Network:        opts.Intent.Network,
 		Target: state.NodeTarget{
 			Type:         opts.Intent.Target.Type,
 			Host:         opts.Intent.Target.Host,
@@ -377,11 +387,14 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 			Port:         opts.Intent.Target.Port,
 			IdentityFile: opts.Intent.Target.IdentityFile,
 		},
-		Runtime:     runtimeType,
-		Status:      "running",
-		LastApplied: time.Now().UTC(),
-		HTTPPort:    node.Ports.HTTP,
-		GRPCPort:    node.Ports.GRPC,
+		Runtime:          runtimeType,
+		Status:           "running",
+		LastApplied:      time.Now().UTC(),
+		HTTPPort:         node.Ports.HTTP,
+		GRPCPort:         node.Ports.GRPC,
+		SolidityHTTPPort: node.Ports.SolidityHTTP,
+		SolidityGRPCPort: node.Ports.SolidityGRPC,
+		JSONRPCPort:      node.Ports.JSONRPC,
 		// P2PPort is load-bearing, not cosmetic: `network add` builds the
 		// joining node's peer list from the P2PPort of every node already
 		// in state and SKIPS any entry where it is zero. Omitting it here
@@ -392,6 +405,7 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		MetricsPort: node.Ports.Metrics,
 		Labels:      node.Labels,
 		InstallPath: node.InstallPath,
+		StorageRoot: StorageRootForNode(node, runtimeType, opts.DeploymentsDir, opts.Intent.Name),
 		Monitoring:  monRes.managed,
 	}
 	outcome := "created"
@@ -429,7 +443,7 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 	_ = builtImageTag // consumed by Phase 3 (docker runtime + image artifact)
 
 	if opts.Wait {
-		waitErr := WaitForReady(ctx, opts.Target, opts.Intent.Name, node.Ports.HTTP, opts.WaitTimeout)
+		waitErr := WaitForReady(ctx, opts.Target, opts.Intent.Name, runtimeType, node.Ports.HTTP, opts.WaitTimeout)
 		res.WaitedMs = time.Since(start).Milliseconds() - deployedMs
 		ready := waitErr == nil
 		res.Ready = &ready
@@ -438,6 +452,50 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 	return res, nil
+}
+
+func remediateJarConfigPermissions(ctx context.Context, opts Options, node *intent.NodeSpec) {
+	if opts.Existing == nil || opts.Existing.Runtime != "jar" || node == nil || node.InstallPath == "" {
+		return
+	}
+	perms, ok := opts.Target.(target.Permissions)
+	if !ok {
+		return
+	}
+	// Best effort preserves the existing no_change result contract. Failure
+	// observability belongs in a future warnings/audit contract, not this AUD.
+	_ = perms.Chmod(ctx, filepath.Join(node.InstallPath, "config.conf"), 0o600)
+}
+
+// StorageRootForNode records only host bind-mount roots. Named volumes are
+// intentionally left empty: snapshot --to cannot safely resolve their host
+// path. The values mirror render.storageSource's explicit data, then path
+// resolution order.
+func StorageRootForNode(node *intent.NodeSpec, runtimeType, deploymentsDir, nodeName string) string {
+	if runtimeType != "docker" || node == nil {
+		return ""
+	}
+	if node.Storage.Data != "" {
+		return bindStoragePath(node.Storage.Data, deploymentsDir, nodeName)
+	}
+	if node.Storage.StoragePath != "" {
+		root := bindStoragePath(node.Storage.StoragePath, deploymentsDir, nodeName)
+		if root == "" {
+			return ""
+		}
+		return filepath.Join(root, "data")
+	}
+	return ""
+}
+
+func bindStoragePath(path, deploymentsDir, nodeName string) string {
+	if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "./") {
+		return ""
+	}
+	if strings.HasPrefix(path, "./") {
+		return filepath.Join(deploymentsDir, nodeName, path)
+	}
+	return path
 }
 
 // recordedNode returns the managed node this apply would replace, i.e. the
@@ -490,6 +548,9 @@ func validateOptions(o Options) error {
 	if sources > 1 {
 		return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
 			"node %q: build, image, jar are mutually exclusive (pick one artifact source)", n.Type)
+	}
+	if err := intent.ValidateJarRuntime(o.Intent); err != nil {
+		return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError, "%v", err)
 	}
 
 	// Phase 2 only wires artifact=jar end-to-end. The artifact_kind
@@ -548,17 +609,31 @@ func validateOptions(o Options) error {
 // pre-build no_change gate and the build-aware gate) check this
 // before invoking — the helper itself trusts the contract to keep
 // the body straight-line.
-func noChangeResult(opts Options, buildSummary *BuildSummary, start time.Time) *Result {
+func noChangeResult(opts Options, buildSummary *BuildSummary, start time.Time) (*Result, error) {
 	// Backfill the network on legacy state. A node deployed before
 	// ManagedNode.Network existed has it empty; on a no-op re-apply we
 	// learn it from the intent, so persist it — otherwise the no_change
 	// Result would report network/is_private from the intent while a
 	// follow-up `status` (which reads state) still showed it absent.
-	// Best-effort: a save failure here doesn't fail the no-op.
-	if opts.Existing != nil && opts.Existing.Network != opts.Intent.Network && opts.Store != nil && opts.State != nil {
-		opts.Existing.Network = opts.Intent.Network
-		opts.Store.UpsertNode(opts.State, *opts.Existing)
-		_ = opts.Store.Save(opts.State)
+	// Persist metadata backfills as part of the no-op. Save failures propagate
+	// so callers cannot report success while legacy state remains stale.
+	if opts.Existing != nil && opts.Store != nil && opts.State != nil {
+		changed := false
+		if opts.Existing.Network != opts.Intent.Network {
+			opts.Existing.Network = opts.Intent.Network
+			changed = true
+		}
+		storageRoot := StorageRootForNode(&opts.Intent.Nodes[0], opts.Existing.Runtime, opts.DeploymentsDir, opts.Intent.Name)
+		if storageRoot != "" && opts.Existing.StorageRoot != storageRoot {
+			opts.Existing.StorageRoot = storageRoot
+			changed = true
+		}
+		if changed {
+			opts.Store.UpsertNode(opts.State, *opts.Existing)
+			if err := opts.Store.Save(opts.State); err != nil {
+				return nil, fmt.Errorf("persist no-change state: %w", err)
+			}
+		}
 	}
 
 	ports := opts.Intent.Nodes[0].Ports
@@ -579,7 +654,7 @@ func noChangeResult(opts Options, buildSummary *BuildSummary, start time.Time) *
 		DurationMs:          time.Since(start).Milliseconds(),
 		Build:               buildSummary,
 		MonitoringEndpoints: monitoringEndpointsFromExisting(opts.Existing, host),
-	}
+	}, nil
 }
 
 // monitoringEndpointsFromExisting returns monitoring URLs from a managed

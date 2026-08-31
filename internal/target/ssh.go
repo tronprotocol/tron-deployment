@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -39,6 +40,10 @@ type SSHTarget struct {
 	provisioning bool
 }
 
+var _ interface{ SetProvisioning(bool) } = (*SSHTarget)(nil)
+
+var sshNetDialContext = (&net.Dialer{}).DialContext
+
 func (t *SSHTarget) DialContext(_ context.Context, network, addr string) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -55,12 +60,6 @@ func (t *SSHTarget) DialContext(_ context.Context, network, addr string) (net.Co
 	}
 	return t.client.Dial(network, addr)
 }
-
-// SetProvisioning puts the target in provisioning mode, which additionally
-// allows the package-manager and shell commands host preparation needs. It is
-// deliberately not part of the target.Target interface: no lifecycle code path
-// and no `trond exec` invocation can reach it.
-func (t *SSHTarget) SetProvisioning(on bool) { t.provisioning = on }
 
 // NewSSHTarget creates a new SSHTarget. Call Connect() before use.
 func NewSSHTarget(host string, port int, user, identityFile string) *SSHTarget {
@@ -81,8 +80,19 @@ func (t *SSHTarget) WithKnownHosts(path string) *SSHTarget {
 	return t
 }
 
-// Connect establishes the SSH connection, verifying the server's host key.
+// Connect establishes the SSH connection, verifying the server's host key,
+// with a two-minute deadline.
+// It bounds TCP connect and SSH handshake at two minutes.
 func (t *SSHTarget) Connect() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return t.ConnectContext(ctx)
+}
+
+// ConnectContext establishes SSH while honoring cancellation during both TCP
+// connect and SSH handshake. Callers with a bounded operation should use this
+// method; Connect supplies a two-minute context.
+func (t *SSHTarget) ConnectContext(ctx context.Context) error {
 	identityPath, err := expandHome(t.identityFile)
 	if err != nil {
 		return fmt.Errorf("expand identity path: %w", err)
@@ -111,14 +121,60 @@ func (t *SSHTarget) Connect() error {
 	}
 
 	addr := net.JoinHostPort(t.host, strconv.Itoa(t.port))
-	client, err := ssh.Dial("tcp", addr, config)
+	conn, err := sshNetDialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("ssh connect to %s: %w", addr, err)
 	}
-
-	t.client = client
+	type result struct {
+		client *ssh.Client
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		cc, chans, reqs, handshakeErr := ssh.NewClientConn(conn, addr, config)
+		if handshakeErr != nil {
+			resultCh <- result{err: handshakeErr}
+			return
+		}
+		client := ssh.NewClient(cc, chans, reqs)
+		if ctx.Err() != nil {
+			_ = client.Close()
+			resultCh <- result{err: ctx.Err()}
+			return
+		}
+		resultCh <- result{client: client}
+	}()
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("ssh connect to %s: %w", addr, result.err)
+		}
+		t.client = result.client
+	case <-ctx.Done():
+		_ = conn.Close()
+		// Handshake can finish concurrently with cancellation. Drain the result
+		// and close a client created after the cancellation branch won.
+		go func() {
+			result := <-resultCh
+			if result.client != nil {
+				_ = result.client.Close()
+			}
+		}()
+		return fmt.Errorf("ssh connect to %s: %w", addr, ctx.Err())
+	}
 	return nil
 }
+
+// IsRemote marks targets whose artifacts must be downloaded by the local
+// process and uploaded over the target connection.
+func (t *SSHTarget) IsRemote() bool { return true }
+
+// SetProvisioning puts the target in provisioning mode, allowing the
+// package-manager and shell commands host preparation needs. It is
+// deliberately not part of the target.Target interface: no lifecycle code
+// path and no `trond exec` invocation can reach it.
+func (t *SSHTarget) SetProvisioning(on bool) { t.provisioning = on }
 
 // hostKeyCallback returns a verifier backed by known_hosts. Falls back to
 // ~/.ssh/known_hosts when no explicit file is configured.
@@ -196,8 +252,11 @@ func (t *SSHTarget) hostKeyCallback() (ssh.HostKeyCallback, error) {
 
 // Close closes the SSH connection.
 func (t *SSHTarget) Close() error {
+	unregisterTransport(t)
 	if t.client != nil {
-		return t.client.Close()
+		err := t.client.Close()
+		t.client = nil
+		return err
 	}
 	return nil
 }
@@ -245,6 +304,125 @@ func (t *SSHTarget) Exec(ctx context.Context, cmd string, args ...string) ([]byt
 		_ = session.Close()
 		return combined.Bytes(), ctx.Err()
 	}
+}
+
+// StreamExec starts an allow-listed remote command without buffering output.
+func (t *SSHTarget) StreamExec(ctx context.Context, cmd string, args ...string) (io.ReadCloser, error) {
+	if t.client == nil {
+		return nil, fmt.Errorf("ssh not connected")
+	}
+	validate := security.ValidateCommand
+	if t.provisioning {
+		validate = security.ValidateProvisioningCommand
+	}
+	if err := validate(cmd); err != nil {
+		return nil, err
+	}
+	session, err := t.client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("new ssh session: %w", err)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		session.Close()
+		return nil, err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		session.Close()
+		return nil, err
+	}
+	if err := session.Start(quoteArgs(cmd, args)); err != nil {
+		session.Close()
+		return nil, err
+	}
+	pr, pw := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	copyStream := func(src io.Reader) { defer wg.Done(); _, _ = io.Copy(pw, src) }
+	go copyStream(stdout)
+	go copyStream(stderr)
+	streamDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		// Close streamDone before the pipe: runLogs may return from io.Copy
+		// and call Close() the moment pw closes; streamDone must already be
+		// closed so Close() classifies this as a natural EOF (no terminate).
+		close(streamDone)
+		_ = pw.Close()
+	}()
+	var terminateOnce sync.Once
+	terminate := func() { terminateOnce.Do(func() { _ = session.Signal(ssh.SIGTERM); _ = session.Close() }) }
+	processDone := make(chan error, 1)
+	go func() { processDone <- session.Wait() }()
+	watchStop, watchDone := watchSSHStreamContext(ctx, terminate)
+	return &sshStreamReader{ReadCloser: pr, watchStop: watchStop, watchDone: watchDone, terminate: terminate, processDone: processDone, streamDone: streamDone, wait: func() error {
+		waitErr := <-processDone
+		wg.Wait()
+		_ = session.Close()
+		return waitErr
+	}}, nil
+}
+
+func watchSSHStreamContext(ctx context.Context, stopRemote func()) (chan struct{}, chan struct{}) {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-ctx.Done():
+			stopRemote()
+		case <-stop:
+		}
+	}()
+	return stop, done
+}
+
+type sshStreamReader struct {
+	io.ReadCloser
+	wait        func() error
+	terminate   func()
+	watchStop   chan struct{}
+	watchDone   chan struct{}
+	processDone chan error
+	streamDone  chan struct{}
+	closeOnce   sync.Once
+	closeErr    error
+}
+
+func (r *sshStreamReader) Close() error {
+	r.closeOnce.Do(func() {
+		close(r.watchStop)
+		<-r.watchDone
+		var waitErr error
+		switch {
+		case r.processDone != nil && r.streamDone != nil:
+			select {
+			case <-r.streamDone:
+				waitErr = <-r.processDone
+			default:
+				r.terminate()
+				waitErr = <-r.processDone
+			}
+		case r.processDone != nil:
+			select {
+			case waitErr = <-r.processDone:
+			default:
+				r.terminate()
+				waitErr = <-r.processDone
+			}
+		default:
+			r.terminate()
+			waitErr = r.wait()
+		}
+		err := r.ReadCloser.Close()
+		if err != nil {
+			r.closeErr = err
+		} else {
+			r.closeErr = waitErr
+		}
+	})
+	return r.closeErr
 }
 
 func (t *SSHTarget) Upload(ctx context.Context, localPath, remotePath string) error {
@@ -423,7 +601,7 @@ func (t *SSHTarget) Download(ctx context.Context, remotePath, localPath string) 
 		return err
 	}
 
-	return os.WriteFile(localPath, data, 0644)
+	return writeFile(localPath, data, 0o600)
 }
 
 func (t *SSHTarget) ReadFile(ctx context.Context, path string) ([]byte, error) {
@@ -432,6 +610,14 @@ func (t *SSHTarget) ReadFile(ctx context.Context, path string) ([]byte, error) {
 
 func (t *SSHTarget) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
 	return t.writeRemoteFile(ctx, path, data, perm)
+}
+
+func (t *SSHTarget) Chmod(ctx context.Context, path string, perm os.FileMode) error {
+	if err := security.ValidateCommand("chmod"); err != nil {
+		return err
+	}
+	_, err := t.Exec(ctx, "chmod", fmt.Sprintf("%o", perm), path)
+	return err
 }
 
 func (t *SSHTarget) DiskFree(ctx context.Context, path string) (uint64, error) {
@@ -504,8 +690,8 @@ func (t *SSHTarget) writeRemoteFile(ctx context.Context, path string, data []byt
 
 	quotedPath := shellQuote(path)
 	quotedDir := shellQuote(filepath.Dir(path))
-	cmd := fmt.Sprintf("mkdir -p %s && tee %s > /dev/null && chmod %o %s",
-		quotedDir, quotedPath, perm, quotedPath)
+	cmd := fmt.Sprintf("umask 077 && mkdir -p %s && if test -e %s; then chmod %o %s; fi && tee %s > /dev/null && chmod %o %s",
+		quotedDir, quotedPath, perm, quotedPath, quotedPath, perm, quotedPath)
 
 	done := make(chan error, 1)
 	go func() { done <- session.Run(cmd) }()

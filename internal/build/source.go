@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -60,13 +63,14 @@ func (s *Source) Resolve(ctx context.Context) error {
 // the concatenation of:
 //
 //	git diff HEAD                          (tracked + staged + unstaged)
-//	git status --porcelain -uall           (untracked files + modes)
+//	git status --porcelain=v1 -z -uall     (untracked files + modes)
+//	contents of each untracked file, sorted by path
 func (s *Source) computeDirty(ctx context.Context) (bool, string, error) {
 	diff, err := s.runGit(ctx, "diff", "HEAD")
 	if err != nil {
 		return false, "", fmt.Errorf("git diff HEAD: %w", err)
 	}
-	status, err := s.runGit(ctx, "status", "--porcelain", "-uall")
+	status, err := s.runGit(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return false, "", fmt.Errorf("git status --porcelain -uall: %w", err)
 	}
@@ -81,7 +85,65 @@ func (s *Source) computeDirty(ctx context.Context) (bool, string, error) {
 	// combination.
 	h.Write([]byte{0})
 	h.Write([]byte(status))
+	paths := untrackedPaths(status)
+	sort.Strings(paths)
+	for i, path := range paths {
+		if err := foldUntrackedFile(h, i, s.Path, path); err != nil {
+			return false, "", err
+		}
+	}
 	return true, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// untrackedPaths extracts paths from git's NUL-terminated porcelain output.
+// -z disables quoting, so paths containing whitespace or newlines remain
+// unambiguous. Only ?? entries are content that is absent from git diff.
+func untrackedPaths(status string) []string {
+	var paths []string
+	for _, record := range strings.Split(status, "\x00") {
+		if len(record) >= 3 && record[:3] == "?? " {
+			paths = append(paths, record[3:])
+		}
+	}
+	return paths
+}
+
+func foldUntrackedFile(h io.Writer, index int, root, path string) error {
+	fullPath := filepath.Join(root, filepath.FromSlash(path))
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return writeUntrackedMarker(h, index, path, "unreadable")
+	}
+	if info.IsDir() {
+		return writeUntrackedMarker(h, index, path, "directory")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if _, err := os.Stat(fullPath); err != nil {
+			return writeUntrackedMarker(h, index, path, "unreadable")
+		}
+	}
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return writeUntrackedMarker(h, index, path, "unreadable")
+	}
+	defer file.Close()
+	// Include index, path, and size as framing; then stream the contents so
+	// large source files do not require a second in-memory copy.
+	if _, err := fmt.Fprintf(h, "untracked %d %d\x00%s\x00", index, info.Size(), path); err != nil {
+		return fmt.Errorf("hash untracked file %q: %w", path, err)
+	}
+	if _, err := io.Copy(h, file); err != nil {
+		return writeUntrackedMarker(h, index, path, "unreadable")
+	}
+	if _, err := io.WriteString(h, "\x00"); err != nil {
+		return fmt.Errorf("hash untracked file %q: %w", path, err)
+	}
+	return nil
+}
+
+func writeUntrackedMarker(h io.Writer, index int, path, kind string) error {
+	_, err := fmt.Fprintf(h, "untracked %d marker:%s\x00%s\x00", index, kind, path)
+	return err
 }
 
 func (s *Source) runGit(ctx context.Context, args ...string) (string, error) {

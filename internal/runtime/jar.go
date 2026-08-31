@@ -3,12 +3,16 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -32,18 +36,34 @@ func (r *JarRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 		return fmt.Errorf("create install dir: %w", err)
 	}
 
-	// Download jar if URL provided and jar not yet present
+	tracker := newChangeTracker(r.target)
+	// Apply skips a pinned artifact already installed; upgrades download first.
 	if opts.JarURL != "" {
-		if err := r.downloadJar(ctx, opts.JarURL, opts.JarPath, opts.JarSHA256); err != nil {
-			return fmt.Errorf("download jar: %w", err)
+		before, err := r.target.Sha256IfExists(ctx, opts.JarPath)
+		if err != nil {
+			return fmt.Errorf("hash existing jar: %w", err)
+		}
+		if opts.JarSHA256 != "" && before == opts.JarSHA256 && before == opts.ArtifactSHA256 {
+			// The artifact and recorded state agree: clean no-op.
+		} else {
+			// A matching file with missing/stale state may represent an
+			// interrupted deploy. Reinstall and restart so the process converges.
+			staleArtifactState := opts.JarSHA256 != "" && before == opts.JarSHA256
+			if err := r.downloadJar(ctx, opts.JarURL, opts.JarPath, opts.JarSHA256); err != nil {
+				return fmt.Errorf("download jar: %w", err)
+			}
+			after, err := r.target.Sha256IfExists(ctx, opts.JarPath)
+			if err != nil {
+				return fmt.Errorf("hash installed jar: %w", err)
+			}
+			tracker.changed = before != after || staleArtifactState
 		}
 	}
 
 	// Write config file. Tracked: systemd has no idea this file exists,
 	// and java-tron parses it once at JVM startup.
-	tracker := newChangeTracker(r.target)
 	configPath := filepath.Join(installPath, "config.conf")
-	if err := tracker.write(ctx, configPath, opts.ConfigData, 0644); err != nil {
+	if err := tracker.write(ctx, configPath, opts.ConfigData, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -86,6 +106,15 @@ func (r *JarRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 		if err := tracker.write(ctx, envPath, []byte(sb.String()), 0600); err != nil {
 			return fmt.Errorf("write env override: %w", err)
 		}
+	} else {
+		// An empty EnvVars map means the service must not inherit a drop-in
+		// from an earlier deploy. Remove it and track the change so a running
+		// JVM cannot retain the old environment.
+		envPath := filepath.Join(
+			fmt.Sprintf("/etc/systemd/system/%s.d", unitName), "env.conf")
+		if err := tracker.remove(ctx, envPath); err != nil {
+			return fmt.Errorf("remove env override: %w", err)
+		}
 	}
 
 	if _, err := r.target.Exec(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -106,6 +135,11 @@ func (r *JarRuntime) Deploy(ctx context.Context, opts DeployOpts) error {
 	}
 
 	return nil
+}
+
+// ArtifactSHA256 returns the digest of a deployed JAR.
+func (r *JarRuntime) ArtifactSHA256(ctx context.Context, path string) (string, error) {
+	return r.target.Sha256IfExists(ctx, path)
 }
 
 func (r *JarRuntime) Start(ctx context.Context, name string) error {
@@ -206,6 +240,13 @@ func (r *JarRuntime) Logs(ctx context.Context, name string, opts LogOpts) (io.Re
 	if opts.Follow {
 		args = append(args, "-f")
 	}
+	if opts.Follow {
+		if stream, ok := r.target.(target.StreamExec); ok {
+			if reader, err := stream.StreamExec(ctx, "journalctl", args...); err == nil {
+				return reader, nil
+			}
+		}
+	}
 
 	out, err := r.target.Exec(ctx, "journalctl", args...)
 	if err != nil {
@@ -217,35 +258,107 @@ func (r *JarRuntime) Logs(ctx context.Context, name string, opts LogOpts) (io.Re
 
 // downloadJar downloads the jar file and verifies its SHA256 hash.
 func (r *JarRuntime) downloadJar(ctx context.Context, url, destPath, expectedSHA256 string) error {
-	// Check if jar already exists with correct hash
-	if expectedSHA256 != "" {
-		out, err := r.target.Exec(ctx, "sha256sum", destPath)
-		if err == nil {
-			fields := strings.Fields(string(out))
-			if len(fields) > 0 && fields[0] == expectedSHA256 {
-				return nil // Already downloaded and verified
-			}
-		}
+	// Download to a temporary path so a failed transfer or checksum never
+	// destroys the currently running artifact.
+	tmpPath := destPath + ".upgrade.tmp"
+	if remote, ok := r.target.(interface{ IsRemote() bool }); ok && remote.IsRemote() {
+		return r.downloadJarLocally(ctx, url, tmpPath, destPath, expectedSHA256)
 	}
-
-	// Download
-	if _, err := r.target.Exec(ctx, "curl", "-fSL", "-o", destPath, url); err != nil {
+	if _, err := r.target.Exec(ctx, "curl", "-fSL", "-o", tmpPath, url); err != nil {
+		_, _ = r.target.Exec(ctx, "rm", "-f", tmpPath)
 		return fmt.Errorf("download %s: %w", url, err)
 	}
 
 	// Verify hash
 	if expectedSHA256 != "" {
-		out, err := r.target.Exec(ctx, "sha256sum", destPath)
+		out, err := r.target.Exec(ctx, "sha256sum", tmpPath)
 		if err != nil {
+			_, _ = r.target.Exec(ctx, "rm", "-f", tmpPath)
 			return fmt.Errorf("sha256sum: %w", err)
 		}
 		fields := strings.Fields(string(out))
-		if len(fields) == 0 || fields[0] != expectedSHA256 {
+		if len(fields) == 0 {
+			_, _ = r.target.Exec(ctx, "rm", "-f", tmpPath)
+			return fmt.Errorf("SHA256 verification returned no digest; expected %s", expectedSHA256)
+		}
+		if fields[0] != expectedSHA256 {
+			_, _ = r.target.Exec(ctx, "rm", "-f", tmpPath)
 			return fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedSHA256, fields[0])
 		}
 	}
+	if _, err := r.target.Exec(ctx, "mv", tmpPath, destPath); err != nil {
+		_, _ = r.target.Exec(ctx, "rm", "-f", tmpPath)
+		return fmt.Errorf("install downloaded jar: %w", err)
+	}
 
 	return nil
+}
+
+func (r *JarRuntime) downloadJarLocally(ctx context.Context, url, remoteTmp, destPath, expectedSHA256 string) error {
+	const maxJARBytes int64 = 512 << 20
+	f, err := os.CreateTemp("", "trond-jar-")
+	if err != nil {
+		return fmt.Errorf("create local download: %w", err)
+	}
+	localPath := f.Name()
+	defer os.Remove(localPath)
+	defer f.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("create download request: %w", err)
+	}
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("download %s: http %s", url, resp.Status)
+	}
+	if resp.ContentLength > maxJARBytes {
+		return fmt.Errorf("download %s exceeds maximum JAR size of %d bytes", url, maxJARBytes)
+	}
+	if written, err := io.Copy(f, io.LimitReader(resp.Body, maxJARBytes+1)); err != nil {
+		return fmt.Errorf("save local download: %w", err)
+	} else if written > maxJARBytes {
+		return fmt.Errorf("download %s exceeds maximum JAR size of %d bytes", url, maxJARBytes)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close local download: %w", err)
+	}
+	if expectedSHA256 != "" {
+		check, err := os.Open(localPath)
+		if err != nil {
+			return err
+		}
+		h := sha256.New()
+		_, copyErr := io.Copy(h, check)
+		_ = check.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		got := fmt.Sprintf("%x", h.Sum(nil))
+		if got != expectedSHA256 {
+			return fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedSHA256, got)
+		}
+	}
+	if err := r.target.PutFile(ctx, localPath, remoteTmp); err != nil {
+		r.cleanupRemoteTmp(remoteTmp)
+		return fmt.Errorf("upload jar: %w", err)
+	}
+	if _, err := r.target.Exec(ctx, "mv", remoteTmp, destPath); err != nil {
+		r.cleanupRemoteTmp(remoteTmp)
+		return fmt.Errorf("install downloaded jar: %w", err)
+	}
+	return nil
+}
+
+func (r *JarRuntime) cleanupRemoteTmp(path string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, _ = r.target.Exec(cleanupCtx, "rm", "-f", path)
 }
 
 // Ensure JarRuntime implements Runtime

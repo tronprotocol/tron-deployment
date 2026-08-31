@@ -76,7 +76,12 @@ func explainNode(w io.Writer, raw, final *intent.NodeSpec) {
 	mem := final.Resources.Memory
 	rawMem := r.Resources.Memory
 	row(w, mark(rawMem), "resources.memory", mem, rawMem == "")
-	heap := render.JVMArgsString(render.ParseMemoryGB(mem), 17, final.JVM)
+	memGB, memErr := render.ParseMemoryGB(mem)
+	if memErr != nil {
+		fmt.Fprintf(w, "    !  JVM heap not derived: invalid resources.memory %q (%v)\n", mem, memErr)
+		return
+	}
+	heap := render.JVMArgsString(memGB, 17, final.JVM)
 	xmx := firstFlag(heap, "-Xmx")
 	if xmx != "" {
 		fmt.Fprintf(w, "    →  JVM heap derived: %s\n", xmx)

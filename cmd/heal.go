@@ -31,8 +31,9 @@ import (
 // the next one returns healed=[] / skipped=[] / still_failing=[].
 
 var (
-	healDryRun bool
-	healOnly   []string // restrict to specific check names; defaults = all
+	healDryRun   bool
+	healOnly     []string // restrict to specific check names; defaults = all
+	healCheckers = diagnosis.AllCheckers
 )
 
 var autoHealCmd = &cobra.Command{
@@ -112,6 +113,7 @@ func runAutoHeal(cmd *cobra.Command, args []string) error {
 	opts := diagnosis.CheckOpts{
 		NodeName:    nc.Node.Name,
 		NodeType:    "", // diagnose doesn't read this from state today; checkers cope
+		Network:     nc.Node.Network,
 		Runtime:     nc.Node.Runtime,
 		HTTPPort:    nc.Node.HTTPPort,
 		GRPCPort:    nc.Node.GRPCPort,
@@ -119,7 +121,7 @@ func runAutoHeal(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 	defer cancel()
-	checkers := diagnosis.AllCheckers()
+	checkers := healCheckers()
 	results := make([]diagnosis.CheckResult, 0, len(checkers))
 	for _, c := range checkers {
 		if len(healOnly) > 0 && !contains(healOnly, c.Name()) {
@@ -182,6 +184,9 @@ func runAutoHeal(cmd *cobra.Command, args []string) error {
 		"still_failing": stillFailing,
 		"duration_ms":   time.Since(start).Milliseconds(),
 		"dry_run":       healDryRun,
+	}
+	if len(healed) == 0 && len(skipped) == 0 && len(stillFailing) == 0 {
+		result["result"] = "no_action"
 	}
 
 	outputFmt, _ := cmd.Flags().GetString("output")

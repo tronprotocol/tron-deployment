@@ -20,6 +20,9 @@ type StructuredError struct {
 	Message     string   `json:"message"`
 	Suggestions []string `json:"suggestions,omitempty"`
 	ExitCode    int      `json:"exit_code"`
+	// ArtifactSwapped reports that an upgrade changed the runnable artifact
+	// before a later error. It is omitted for all other errors.
+	ArtifactSwapped bool `json:"artifact_swapped,omitempty"`
 }
 
 func (e *StructuredError) Error() string {

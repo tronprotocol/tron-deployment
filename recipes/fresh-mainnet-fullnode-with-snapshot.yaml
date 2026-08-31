@@ -43,7 +43,7 @@ steps:
       - "{{ params.intent_path }}"
     on_failure: abort
 
-  - id: download-snapshot
+  - id: download_snapshot
     description: |
       Stream the chain DB tarball through gunzip + tar in one pipeline,
       MD5-verifying inline. Refuses overwrite of an existing DB unless
@@ -89,7 +89,7 @@ steps:
 # Rollback runs only when the apply step fails. We don't roll back the
 # snapshot — it's expensive to redo and harmless to leave on disk.
 rollback:
-  - id: stop-failed-node
+  - id: stop_failed_node
     command: stop
     args:
       - "{{ steps.apply.name }}"

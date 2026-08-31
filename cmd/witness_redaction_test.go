@@ -3,10 +3,12 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
 // F3 regression tests for the two positional, LCS-free differs that
-// live in package cmd: simpleHOCONDiff (plan --diff, whose output goes
+// exercised by plan --diff and verify-config, whose output goes
 // into result["config_diff"] and out through output.WriteJSON) and
 // lineDiff (verify-config, whose output goes into diffs[]).
 //
@@ -78,7 +80,7 @@ func TestSimpleHOCONDiff_RedactsWitnessKey(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			diffs := simpleHOCONDiff(tc.old, tc.new)
+			diffs := render.DiffLines(tc.old, tc.new, 0)
 			assertNoKeys(t, "simpleHOCONDiff", diffs)
 			if len(diffs) != tc.wantDiffs {
 				t.Errorf("drift reporting changed: got %d diff lines, want %d: %v",
@@ -97,10 +99,10 @@ func TestSimpleHOCONDiff_RedactsWitnessKey(t *testing.T) {
 func TestSimpleHOCONDiff_StillDetectsRotation(t *testing.T) {
 	old := []string{`localwitness = ["` + keyA + `"]`}
 	new := []string{`localwitness = ["` + keyB + `"]`}
-	if diffs := simpleHOCONDiff(old, new); len(diffs) != 2 {
+	if diffs := render.DiffLines(old, new, 0); len(diffs) != 2 {
 		t.Fatalf("a rotated witness key must still be reported as drift, got %v", diffs)
 	}
-	if diffs := simpleHOCONDiff(old, old); len(diffs) != 0 {
+	if diffs := render.DiffLines(old, old, 0); len(diffs) != 0 {
 		t.Fatalf("an unchanged witness key must not be reported as drift, got %v", diffs)
 	}
 }
@@ -110,7 +112,7 @@ func TestLineDiff_RedactsWitnessKey(t *testing.T) {
 
 	t.Run("key-rotation", func(t *testing.T) {
 		desired := "a = 1\n" + `localwitness = ["` + keyB + `"]` + "\nz = 9\n"
-		diffs := lineDiff(live, desired, 0)
+		diffs := render.DiffText(live, desired, 0)
 		assertNoKeys(t, "lineDiff", diffs)
 		if len(diffs) != 2 {
 			t.Errorf("rotated key must still be reported: %v", diffs)
@@ -122,7 +124,7 @@ func TestLineDiff_RedactsWitnessKey(t *testing.T) {
 
 	t.Run("line-shift", func(t *testing.T) {
 		desired := "a = 1\nseed.node.ip.list = []\n" + `localwitness = ["` + keyA + `"]` + "\nz = 9\n"
-		diffs := lineDiff(live, desired, 0)
+		diffs := render.DiffText(live, desired, 0)
 		assertNoKeys(t, "lineDiff", diffs)
 		if len(diffs) == 0 {
 			t.Error("a line shift must still be reported as drift")
@@ -134,7 +136,7 @@ func TestLineDiff_RedactsWitnessKey(t *testing.T) {
 	// treatment as the changed lines.
 	t.Run("context-lines", func(t *testing.T) {
 		desired := "a = 1\n" + `localwitness = ["` + keyA + `"]` + "\nz = CHANGED\n"
-		diffs := lineDiff(live, desired, 2)
+		diffs := render.DiffText(live, desired, 2)
 		assertNoKeys(t, "lineDiff --context", diffs)
 		joined := strings.Join(diffs, "\n")
 		if !strings.Contains(joined, `  localwitness = ["<REDACTED>"]`) {
@@ -143,7 +145,7 @@ func TestLineDiff_RedactsWitnessKey(t *testing.T) {
 	})
 
 	t.Run("identical-is-in-sync", func(t *testing.T) {
-		if diffs := lineDiff(live, live, 0); len(diffs) != 0 {
+		if diffs := render.DiffText(live, live, 0); len(diffs) != 0 {
 			t.Errorf("identical configs must stay in_sync, got %v", diffs)
 		}
 	})

@@ -7,6 +7,45 @@ import (
 	"testing"
 )
 
+func TestLocalTargetWriteFileTightensExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.conf")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewLocalTarget().WriteFile(context.Background(), path, []byte("new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %#o, want 0600", got)
+	}
+}
+
+func TestLocalTargetDownloadTightensExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(src, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewLocalTarget().Download(context.Background(), src, dst); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %#o, want 0600", got)
+	}
+}
+
 // TestLocalTarget_PutFile_DifferentPath asserts the standard copy
 // flow with atomic install (write `.tmp`, rename). Phase 4 needs
 // this when the cobra path serves a Local target but the caller

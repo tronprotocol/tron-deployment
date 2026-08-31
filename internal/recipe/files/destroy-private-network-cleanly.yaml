@@ -20,7 +20,7 @@ params:
       that was used with `trond network create`).
 
 steps:
-  - id: status-check
+  - id: status_check
     description: |
       Confirm the network exists. on_failure=continue so an
       already-destroyed network just falls through to the destroy

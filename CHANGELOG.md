@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Intent parsing now rejects unknown fields; invalid memory values now error
+  instead of falling back to 16 GB; `--monitor` no longer suppresses
+  `monitoring.enabled: true`. `extra_env` `$$` escaping is security
+  hardening, not a breaking change.
+
+### Fixed
+
+- Network auto-rollback now includes nodes whose upgrade artifact was activated
+  before a later child failure, using the `artifact_swapped` error-envelope fact;
+  schema contract bumped from 1.16.1 to 1.16.2. Network rollback also preserves
+  the pre-series `PreviousVersion` metadata so repeated rollbacks remain honest.
+- Upgrade and rollback now fail when artifact SHA256 probing fails instead of
+  retaining a stale digest that could produce a false drift result.
+- Untracked build-source directories, dangling links, and unreadable files are
+  represented by hash markers instead of aborting the build.
+- State save treats post-rename directory fsync as best-effort for platforms
+  that cannot sync directories.
+- Target overlays can explicitly disable inherited `auto_ports`.
+- Network destroy reports every node affected by a shared target-resolution
+  failure.
+- `intent_hash` now accepts the versioned `v2:` prefix.
+- SSH bootstrap provisioning mode is restored, so package-manager, shell, and
+  user-creation commands are allowed only during `bootstrap`.
+- Network upgrade backup cleanup now executes `rm` through the target layer;
+  cleanup failures are reported as warnings instead of misreporting a successful
+  upgrade as `UPGRADE_ERROR`.
+- Agent guide no longer claims `network create` stops at the first failed
+  node: the command attempts every node in turn, aggregates failures into
+  `DEPLOY_ERROR` (exit 1), and leaves successfully deployed nodes running
+  and recorded in state for reconciliation on re-run.
+- `network destroy` partial-failure error message now states the actual
+  state semantics: removed entries are gone from state, failed entries
+  REMAIN in state and can be retried (previously claimed the state was
+  "cleaned up regardless"). Part of the #225/#226 correction chain — the
+  earlier guide text was written on top of trond's own lying runtime
+  error message.
+- `status` output schema now accepts versioned intent hashes (`v2:` prefix),
+  fixing schema-validation failures against real `status` output; contract test
+  coverage extended to status. (council R2 finding)
+- Jar intent nodes no longer receive the default Docker image, which
+  previously made `apply` reject mutually-exclusive artifact sources. Jar
+  plus Docker runtime is now rejected up front with a clear error pointing to
+  `target.runtime=jar` (commit fde40dd).
+- `diagnose` and `heal` now use the node's recorded network for
+  private-network gating checks (AUD-044; commit 8ad9c5a).
+- **P0 audit remediation.** Batch B adds focused cmd-side test splits for
+  `cmd/build`, `cmd/state`, `cmd/network create`, and `cmd/apply` (B1–B8),
+  while domain 1–5 fixes harden lifecycle, state persistence, target
+  transport, rendering, snapshots, runtime upgrades, security, replay, and
+  transaction broadcasting behavior.
+- Multi-node network creation, addition, destruction, and rolling upgrades
+  now persist node state consistently, verify every node, and roll back
+  already-upgraded nodes when verification fails. Automatic port allocation
+  is persisted for repeatable reconciliation.
+- Snapshot downloads stage data before publishing atomically, refuse unsafe
+  overwrites, verify the process identity before stopping jobs, and merge
+  build environment maps correctly. Jar upgrades and rollbacks now swap the
+  running artifact reliably.
+- Rendering now validates strict YAML fields, merges overlays correctly,
+  escapes Compose environment values, wires the `solidity_grpc` port, avoids
+  in-container HTTP-port conflicts, and caps JVM heap below 8 GB of container
+  memory. SSH probing and downloads are resilient and report the actual host.
+- Sensitive witness data remains redacted, JAR configuration permissions are
+  restricted, state saves are atomic with surfaced persistence errors, and
+  replay cursors advance only after complete block replay.
+- Replay now aborts with a clear error when any transaction broadcast in a block
+  fails, and retries resume from the failed block boundary (AUD-009).
+
+### Changed
+
+- Shared state loading, target resolution, live-config reading, template and
+  path discovery, diff computation, environment-variable expansion
+  (`internal/apply.ResolveEnvVars`), endpoint/port handling, and node-state
+  persistence are centralized across CLI and MCP paths.
+- `trond plan` now reports `current_state: "not_deployed"` instead of
+  `"not deployed"`, matching the documented machine-readable contract.
+- `intent_hash` in `apply` and `status` output is now versioned as
+  `v2:<sha256>`; the previous bare-hex digest format is replaced by the v2
+  digest scheme.
+- With `auto_ports: true`, allocated ports are persisted. Re-running
+  `trond plan` after `apply` now correctly reports `changes: null` and zero
+  downtime instead of spurious configuration diffs requiring a restart.
+- MCP lifecycle and diagnostic paths now use the same CLI contracts and
+  shared implementations; contract coverage and implementation specs were
+  expanded to document the corrected behavior.
+
 ## [0.1.0] — 2026-XX-XX
 
 First tagged release. The project transitions from a curated set of HOCON

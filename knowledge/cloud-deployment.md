@@ -63,15 +63,30 @@ The recommended workflow provisions infrastructure with Terraform, then uses tro
 - Create compute instance, SSD volume, security group, and elastic/static IP
 - Output the instance public IP and SSH key path
 
-**Step 2: Prepare the target**
-```bash
-trond preflight --target ssh://user@<ip> --output json
+**Step 2: Prepare the intent + preflight**
+
+SSH targets are declared in the intent file's `target:` block (full
+example: `examples/remote-ssh-fullnode.yaml`):
+
+```yaml
+target:
+  type: ssh
+  host: node01.example.com
+  user: deploy
+  port: 22
+  identity_file: ~/.ssh/id_rsa
+  runtime: docker
 ```
-This checks JDK, disk, memory, and port availability.
+
+Then preflight that intent:
+```bash
+trond preflight --intent intent.yaml --output json
+```
+This checks JDK, disk, memory, and port availability on the target.
 
 **Step 3: Deploy**
 ```bash
-trond apply --intent intent.yaml --target ssh://user@<ip> --output json
+trond apply --intent intent.yaml --output json
 ```
 
 **Step 4: Verify**

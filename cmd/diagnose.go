@@ -10,6 +10,8 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/output"
 )
 
+var diagnoseCheckers = diagnosis.AllCheckers
+
 var diagnoseCmd = &cobra.Command{
 	Use:   "diagnose <node>",
 	Short: "Run diagnostic checks on a node",
@@ -35,11 +37,12 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	opts := diagnosis.CheckOpts{
 		NodeName: nc.Node.Name,
 		Runtime:  nc.Node.Runtime,
+		Network:  nc.Node.Network,
 		HTTPPort: nc.Node.HTTPPort,
 		GRPCPort: nc.Node.GRPCPort,
 	}
 
-	checkers := diagnosis.AllCheckers()
+	checkers := diagnoseCheckers()
 	var results []diagnosis.CheckResult
 
 	for _, checker := range checkers {

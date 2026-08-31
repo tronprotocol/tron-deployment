@@ -16,6 +16,9 @@ var restartCmd = &cobra.Command{
 	RunE:  runRestart,
 }
 
+// saveRestartState is a test injection seam; production default persists via nodeContext.SaveState.
+var saveRestartState = func(nc *nodeContext) error { return nc.SaveState() }
+
 func init() {
 	rootCmd.AddCommand(restartCmd)
 }
@@ -42,14 +45,18 @@ func runRestart(cmd *cobra.Command, args []string) error {
 
 	if err := nc.Runtime.Start(cmd.Context(), name); err != nil {
 		nc.Node.Status = "error"
-		nc.SaveState()
+		if saveErr := persistRestartState(name, nc, start); saveErr != nil {
+			return saveErr
+		}
 		writeAudit(auditEvent{Command: "restart", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "RESTART_ERROR", Start: start})
 		return exitWithError("RESTART_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to start %s after stop: %v", name, err))
 	}
 
 	nc.Node.Status = "running"
-	nc.SaveState()
+	if err := persistNodeState("restart", name, nc, start, saveRestartState); err != nil {
+		return err
+	}
 	writeAudit(auditEvent{Command: "restart", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
 	writeResult(map[string]any{"name": name, "status": "running"})

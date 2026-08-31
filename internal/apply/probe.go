@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -30,10 +31,7 @@ func LiveStatus(ctx context.Context, tgt target.Target, node *state.ManagedNode)
 	if tgt == nil || node == nil {
 		return out
 	}
-	port := node.HTTPPort
-	if port == 0 {
-		port = 8090
-	}
+	port := PortOrDefault(node.HTTPPort, 8090)
 
 	// probe issues a request against the node's HTTP API. body=="" is a
 	// GET (TRON endpoints that take no params, e.g. getnowblock); a
@@ -42,7 +40,7 @@ func LiveStatus(ctx context.Context, tgt target.Target, node *state.ManagedNode)
 	// (SSH-tunnelled for remote targets); docker nodes curl inside the
 	// container via `docker exec`.
 	probe := func(path, body string) ([]byte, error) {
-		url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
+		url := ProbeURL(port, path)
 		if node.Runtime == "jar" {
 			if body == "" {
 				return target.Get(ctx, tgt, url, 2*time.Second)
@@ -187,7 +185,7 @@ func LogsDescriptor(node *state.ManagedNode) map[string]any {
 		return map[string]any{
 			"runtime":   "docker",
 			"container": node.Name,
-			"path":      "/java-tron/logs/tron.log",
+			"path":      render.ContainerLogPath,
 		}
 	default:
 		// Unknown/unrecorded runtime (e.g. a legacy node from before the

@@ -39,9 +39,10 @@ func TestCheckMemoryRecommended(t *testing.T) {
 			warnings: 1,
 		},
 		{
-			name:   "empty memory uses default",
-			nodes:  []intent.NodeSpec{{Type: "fullnode"}},
-			status: "pass",
+			name:       "empty memory fails validation",
+			nodes:      []intent.NodeSpec{{Type: "fullnode"}},
+			status:     "fail",
+			messageHas: []string{"invalid", "memory"},
 		},
 	}
 

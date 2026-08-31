@@ -368,9 +368,10 @@ func TestApply_DirtySourceTriggersRebuild(t *testing.T) {
 		Version:       res1.Version,
 		Runtime:       "jar",
 	}
+	ft2 := &fakeTarget{}
 	res2, err := Apply(context.Background(), Options{
 		Intent:         in,
-		Target:         &fakeTarget{},
+		Target:         ft2,
 		Store:          store,
 		State:          st,
 		IntentHash:     "same-intent-hash",
@@ -454,9 +455,10 @@ func TestApply_CleanCacheHitNoChange(t *testing.T) {
 		Version:       res1.Version,
 		Runtime:       "jar",
 	}
+	ft2 := &fakeTarget{}
 	res2, err := Apply(context.Background(), Options{
 		Intent:         in,
-		Target:         &fakeTarget{},
+		Target:         ft2,
 		Store:          store,
 		State:          st,
 		IntentHash:     "stable-hash",
@@ -479,6 +481,12 @@ func TestApply_CleanCacheHitNoChange(t *testing.T) {
 	}
 	if res2.Build.CacheKey != res1.Build.CacheKey {
 		t.Errorf("cache key drift: %q vs %q", res2.Build.CacheKey, res1.Build.CacheKey)
+	}
+	if len(ft2.chmodPaths) != 1 || ft2.chmodPaths[0] != filepath.Join(in.Nodes[0].InstallPath, "config.conf") {
+		t.Errorf("Chmod calls = %v, want jar config path", ft2.chmodPaths)
+	}
+	if ft2.chmodPerms[0] != 0o600 {
+		t.Errorf("Chmod mode = %#o, want 0600", ft2.chmodPerms[0])
 	}
 }
 

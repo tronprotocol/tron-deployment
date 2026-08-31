@@ -49,6 +49,17 @@ func (c *changeTracker) write(ctx context.Context, path string, data []byte, per
 	return c.target.WriteFile(ctx, path, data, perm)
 }
 
+// remove deletes path, recording a change when the file existed. A removed
+// systemd drop-in must cause a restart just like a rewritten one, otherwise
+// the running process keeps the old environment until its next restart.
+func (c *changeTracker) remove(ctx context.Context, path string) error {
+	if _, err := c.target.ReadFile(ctx, path); err == nil {
+		c.changed = true
+	}
+	_, err := c.target.Exec(ctx, "rm", "-f", path)
+	return err
+}
+
 // LogOpts configures log retrieval.
 type LogOpts struct {
 	Tail   int
@@ -84,14 +95,38 @@ type Runtime interface {
 	Logs(ctx context.Context, name string, opts LogOpts) (io.ReadCloser, error)
 }
 
+// UpgradeOpts carries the artifact coordinates for a version switch.
+type UpgradeOpts struct {
+	Version   string
+	JarURL    string // Jar runtime only: URL of the target-version JAR
+	JarSHA256 string // Jar runtime only: optional integrity pin
+}
+
+// ArtifactUpgrader is an optional runtime capability. Callers must prepare
+// before stopping the node, then activate and rollback the prepared artifact
+// as one transaction. Runtimes without it cannot safely be upgraded.
+type ArtifactUpgrader interface {
+	PrepareArtifact(ctx context.Context, name string, opts UpgradeOpts) (ArtifactTransaction, error)
+}
+
+// ArtifactTransaction changes only the artifact. The caller owns stopping and
+// starting the service, and must Rollback when activation or startup fails.
+type ArtifactTransaction interface {
+	Activate(context.Context) error
+	Start(context.Context) error
+	Rollback(context.Context) error
+	Cleanup(context.Context) error
+}
+
 // DeployOpts contains everything needed for a deployment.
 type DeployOpts struct {
-	Name        string
-	ConfigData  []byte
-	ComposeData []byte // Docker runtime only
-	SystemdData []byte // Jar runtime only
-	JarPath     string // Jar runtime only
-	JarURL      string // Jar runtime only
-	JarSHA256   string // Jar runtime only
-	EnvVars     map[string]string
+	Name           string
+	ConfigData     []byte
+	ComposeData    []byte // Docker runtime only
+	SystemdData    []byte // Jar runtime only
+	JarPath        string // Jar runtime only
+	JarURL         string // Jar runtime only
+	JarSHA256      string // Jar runtime only
+	ArtifactSHA256 string // previously recorded Jar artifact digest
+	EnvVars        map[string]string
 }

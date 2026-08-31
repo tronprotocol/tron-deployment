@@ -1,5 +1,3 @@
-//go:build e2e
-
 package cmd
 
 import (
@@ -12,9 +10,9 @@ import (
 	"testing"
 )
 
-// Shared helpers for the e2e suite. Every file gated by //go:build e2e
-// in package cmd uses these. Kept here (not in cmd/) so a `go build`
-// of trond doesn't pull them in.
+// Shared helpers for package cmd tests. Both the hermetic tests
+// (default suite) and the container tests (//go:build e2e) use these.
+// Kept here (not in cmd/) so a `go build` of trond doesn't pull them in.
 //
 // Two design choices worth flagging:
 //
@@ -75,6 +73,8 @@ func e2eBinary(t *testing.T) string {
 // t.TempDir() and a copy of the host environment with TROND_STATE_DIR
 // pointing at it. Use this for any subprocess invocation that
 // reads/writes state (apply, status, network, recipe, ...).
+//
+//nolint:unparam // stateDir is consumed by Docker-tagged tests.
 func e2eEnv(t *testing.T) (stateDir string, env []string) {
 	t.Helper()
 	stateDir = t.TempDir()
@@ -130,13 +130,4 @@ func absExample(t *testing.T, rel string) string {
 		t.Fatalf("abs %s: %v", rel, err)
 	}
 	return abs
-}
-
-// skipUnlessDocker short-circuits a test when Docker isn't usable.
-// Used by every e2e test that actually starts containers.
-func skipUnlessDocker(t *testing.T) {
-	t.Helper()
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skipf("Docker not available: %v", err)
-	}
 }

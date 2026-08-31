@@ -407,7 +407,7 @@ trond apply --intent <file>
   ├─ 7. Compute diff vs deployed state
   │     ├─ No changes → exit 0, "no changes"
   │     └─ Changes detected → continue
-  ├─ 8. For each step (idempotent check-then-act):
+  ├─ 8. For each apply step (idempotent check-then-act; apply only):
   │     ├─ [jar] Download jar if missing/wrong hash
   │     ├─ Upload config files to target
   │     ├─ [docker] Upload compose file + docker compose up -d

@@ -2,9 +2,13 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // These tests cover one defect with three instances: a deploy writes new
@@ -152,6 +156,77 @@ func TestJarRuntime_Deploy_RestartsOnlyWhenSomethingChanged(t *testing.T) {
 	}
 }
 
+func TestJarRuntime_Deploy_ConfigAndSecretEnvAreOwnerOnly(t *testing.T) {
+	ft := newFakeTarget()
+	rt := NewJarRuntime(ft)
+	opts := DeployOpts{
+		Name:        "n1",
+		JarPath:     "/opt/tron/FullNode.jar",
+		ConfigData:  []byte(witnessConfig),
+		SystemdData: []byte("[Service]\n"),
+		EnvVars:     map[string]string{"SR_PRIVATE_KEY": "deadbeef"},
+	}
+	if err := rt.Deploy(context.Background(), opts); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	for _, path := range []string{
+		"/opt/tron/config.conf",
+		"/etc/systemd/system/tron-n1.service.d/env.conf",
+	} {
+		perm, ok := ft.perms[path]
+		if !ok {
+			t.Errorf("no mode recorded for %s", path)
+			continue
+		}
+		if perm != 0600 {
+			t.Errorf("%s mode = %#o, want 0600", path, perm)
+		}
+	}
+}
+
+type jarDiskTarget struct{ *target.LocalTarget }
+
+func (t *jarDiskTarget) Exec(ctx context.Context, cmd string, args ...string) ([]byte, error) {
+	if cmd == "systemctl" {
+		return nil, nil
+	}
+	return t.LocalTarget.Exec(ctx, cmd, args...)
+}
+
+func (t *jarDiskTarget) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
+	if strings.HasPrefix(path, "/etc/systemd/") {
+		return nil
+	}
+	return t.LocalTarget.WriteFile(ctx, path, data, perm)
+}
+
+func TestJarRuntime_Deploy_TightensExistingConfigOnDisk(t *testing.T) {
+	install := t.TempDir()
+	configPath := filepath.Join(install, "config.conf")
+	if err := os.WriteFile(configPath, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewJarRuntime(&jarDiskTarget{LocalTarget: target.NewLocalTarget()})
+	opts := DeployOpts{
+		Name:        "n1",
+		JarPath:     filepath.Join(install, "FullNode.jar"),
+		ConfigData:  []byte(witnessConfig),
+		SystemdData: []byte("[Service]\n"),
+	}
+	if err := rt.Deploy(context.Background(), opts); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config mode = %#o, want 0600", got)
+	}
+}
+
 // TestJarRuntime_Deploy_EnvVarsAllSurvive covers a separate defect in the
 // same function: the drop-in was written once per key inside the loop,
 // each write truncating the last, so exactly one variable survived and
@@ -184,6 +259,47 @@ func TestJarRuntime_Deploy_EnvVarsAllSurvive(t *testing.T) {
 	}
 	if n := strings.Count(got, "[Service]"); n != 1 {
 		t.Errorf("drop-in has %d [Service] sections, want 1:\n%s", n, got)
+	}
+}
+
+func TestJarRuntime_Deploy_EmptyEnvVarsRemovesOldDropIn(t *testing.T) {
+	ft := newFakeTarget()
+	rt := NewJarRuntime(ft)
+	ctx := context.Background()
+	base := DeployOpts{
+		Name:        "n1",
+		JarPath:     "/opt/tron/FullNode.jar",
+		ConfigData:  []byte("a = 1\n"),
+		SystemdData: []byte("[Service]\n"),
+	}
+	withEnv := base
+	withEnv.EnvVars = map[string]string{"SR_PRIVATE_KEY": "deadbeef"}
+	if err := rt.Deploy(ctx, withEnv); err != nil {
+		t.Fatalf("Deploy with env: %v", err)
+	}
+	ft.cmds = nil
+	if err := rt.Deploy(ctx, base); err != nil {
+		t.Fatalf("Deploy without env: %v", err)
+	}
+
+	envPath := "/etc/systemd/system/tron-n1.service.d/env.conf"
+	if cmd := findCmd(ft.cmds, "rm", "-f", envPath); cmd == nil {
+		t.Fatalf("old environment drop-in was not removed; commands: %v", ft.cmds)
+	}
+	if findCmd(ft.cmds, "systemctl", "restart", "tron-n1.service") == nil {
+		t.Fatalf("service was not restarted after removing environment drop-in; commands: %v", ft.cmds)
+	}
+}
+
+func TestJarRuntime_RemoveCleansDropIn(t *testing.T) {
+	ft := newFakeTarget()
+	rt := NewJarRuntime(ft)
+	if err := rt.Remove(context.Background(), "n1", false); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	overridePath := "/etc/systemd/system/tron-n1.service.d"
+	if cmd := findCmd(ft.cmds, "rm", "-rf", overridePath); cmd == nil {
+		t.Fatalf("override directory was not removed; commands: %v", ft.cmds)
 	}
 }
 

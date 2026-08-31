@@ -2,39 +2,47 @@ package render
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 )
 
-// ParseMemoryGB converts an intent memory string like "16GB", "32G", "4096MB"
-// into a whole number of gigabytes. Returns 0 if the input is empty or
-// unparseable — the caller should pick a default.
-func ParseMemoryGB(s string) int {
-	if s == "" {
-		return 0
-	}
+// ParseMemoryGB converts an intent memory string into whole gigabytes.
+// GB values and MB values are rounded up, so the result never silently
+// requests less memory than the user specified (for example, 2.5GB is 3GB
+// and 1537MB is 2GB). Invalid, empty, zero, and negative values return an
+// error; callers must not replace a bad value with a default.
+func ParseMemoryGB(s string) (int, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" {
+		return 0, fmt.Errorf("memory must not be empty")
+	}
 	unit := "GB"
+	hasUnit := false
 	for _, u := range []string{"GB", "MB", "G", "M"} {
 		if strings.HasSuffix(s, u) {
+			hasUnit = true
 			unit = u
 			s = strings.TrimSuffix(s, u)
 			break
 		}
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil || n <= 0 {
-		return 0
+	if !hasUnit && strings.Contains(s, ".") {
+		return 0, fmt.Errorf("fractional memory values require a GB unit")
+	}
+	n, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 {
+		return 0, fmt.Errorf("invalid memory %q", s)
 	}
 	switch unit {
 	case "GB", "G":
-		return n
+		return int(math.Ceil(n)), nil
 	case "MB", "M":
-		return n / 1024
+		return int(math.Ceil(n / 1024)), nil
 	}
-	return n
+	return 0, fmt.Errorf("invalid memory unit in %q", s)
 }
 
 // JVMArgs generates JVM command-line arguments based on system memory and intent overrides.

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
 const (
@@ -46,7 +48,7 @@ func TestSimpleDiff_RedactsWitnessKey(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			diffs := simpleDiff(tc.old, tc.new)
+			diffs := render.DiffLines(tc.old, tc.new, 0)
 			for _, d := range diffs {
 				if strings.Contains(d, cfgKeyA) || strings.Contains(d, cfgKeyB) {
 					t.Errorf("simpleDiff leaked a witness private key: %q", d)
@@ -71,7 +73,7 @@ func TestSimpleDiff_RedactsWitnessKey(t *testing.T) {
 	// Redacting before comparing would swallow real drift; redacting
 	// after must not.
 	same := []string{`localwitness = ["` + cfgKeyA + `"]`}
-	if diffs := simpleDiff(same, same); len(diffs) != 0 {
+	if diffs := render.DiffLines(same, same, 0); len(diffs) != 0 {
 		t.Errorf("unchanged key must not be reported as drift: %v", diffs)
 	}
 }

@@ -123,6 +123,24 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		}
 		nodes = filtered
 	}
+	if len(nodes) == 0 {
+		names := make([]string, 0, len(deployState.Nodes))
+		for _, n := range deployState.Nodes {
+			names = append(names, n.Name)
+		}
+		message := "No nodes matched the inspect filter"
+		if inspectNetwork != "" {
+			message = fmt.Sprintf("No nodes matched network %q", inspectNetwork)
+		} else if len(inspectLabelFlags) > 0 {
+			message = "No nodes matched the inspect label filter"
+		}
+		suggestions := []string{"Run: trond list"}
+		if len(names) > 0 {
+			suggestions = append(suggestions, "Available nodes: "+strings.Join(names, ", "))
+		}
+		return output.NewError("NODE_NOT_FOUND", output.ExitGeneralError, message).
+			WithSuggestions(suggestions...)
+	}
 
 	manifest := buildManifest(cmd.Context(), nodes)
 

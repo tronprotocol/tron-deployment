@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 )
 
@@ -11,7 +12,7 @@ func TestSimpleHOCONDiff_DetectsLineChanges(t *testing.T) {
 	old := []string{"node.ip = 127.0.0.1", "node.port = 8090", "shared = same"}
 	new := []string{"node.ip = 127.0.0.1", "node.port = 9999", "shared = same"}
 
-	diffs := simpleHOCONDiff(old, new)
+	diffs := render.DiffLines(old, new, 0)
 	if len(diffs) != 2 {
 		t.Fatalf("expected 2 diff lines (one - one +), got %d: %v", len(diffs), diffs)
 	}
@@ -25,7 +26,7 @@ func TestSimpleHOCONDiff_DetectsLineChanges(t *testing.T) {
 
 func TestSimpleHOCONDiff_EmptyWhenIdentical(t *testing.T) {
 	lines := []string{"a = 1", "b = 2"}
-	if got := simpleHOCONDiff(lines, lines); len(got) != 0 {
+	if got := render.DiffLines(lines, lines, 0); len(got) != 0 {
 		t.Errorf("expected zero diffs for identical input, got %v", got)
 	}
 }
@@ -34,7 +35,7 @@ func TestSimpleHOCONDiff_HandlesUnequalLength(t *testing.T) {
 	old := []string{"line1"}
 	new := []string{"line1", "line2", "line3"}
 
-	diffs := simpleHOCONDiff(old, new)
+	diffs := render.DiffLines(old, new, 0)
 	// Two new lines added → two `+` entries.
 	if len(diffs) != 2 {
 		t.Fatalf("expected 2 added lines, got %d: %v", len(diffs), diffs)

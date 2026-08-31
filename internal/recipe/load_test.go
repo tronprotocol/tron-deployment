@@ -74,6 +74,13 @@ func TestParse_Empty(t *testing.T) {
 	}
 }
 
+func TestParse_RejectsHyphenatedStepID(t *testing.T) {
+	_, err := Parse([]byte("name: probe\nsteps:\n  - id: bad-step\n    command: status\n"))
+	if err == nil || !strings.Contains(err.Error(), "bad-step") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 // TestValidate_ReportsEveryProblemAtOnce: a recipe is a sequence of real
 // operations, so the caller should learn about all the structural
 // problems before the first one runs, not one per attempt.

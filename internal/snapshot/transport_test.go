@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -181,12 +183,21 @@ func TestDownload_SHA256PinMatches(t *testing.T) {
 func TestDownload_SHA256PinMismatchFails(t *testing.T) {
 	srv := startTinyMirror(t, false)
 	defer srv.Close()
+	dest := t.TempDir()
+	db := filepath.Join(dest, "output-directory", "database", "CURRENT")
+	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := Download(context.Background(), DownloadOptions{
 		Source:         sourceFor(srv.URL),
 		Backup:         "backup20250101",
 		Kind:           DBKindLite,
-		DestDir:        t.TempDir(),
+		DestDir:        dest,
+		Force:          true,
 		ExpectedSHA256: strings.Repeat("ab", 32), // valid hex, wrong value
 	})
 	if err == nil {
@@ -194,6 +205,13 @@ func TestDownload_SHA256PinMismatchFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "sha256 mismatch") {
 		t.Fatalf("wrong error for a bad pin: %v", err)
+	}
+	got, readErr := os.ReadFile(db)
+	if readErr != nil || string(got) != "old" {
+		t.Fatalf("digest mismatch changed destination: content=%q err=%v", got, readErr)
+	}
+	if entries, globErr := filepath.Glob(filepath.Join(dest, ".snapshot-*")); globErr != nil || len(entries) != 0 {
+		t.Fatalf("staging artifacts leaked: %v (err=%v)", entries, globErr)
 	}
 }
 

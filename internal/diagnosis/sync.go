@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
@@ -16,11 +17,7 @@ type SyncChecker struct{}
 func (c *SyncChecker) Name() string { return "sync_progress" }
 
 func (c *SyncChecker) Run(ctx context.Context, tgt target.Target, opts CheckOpts) CheckResult {
-	if opts.HTTPPort == 0 {
-		opts.HTTPPort = 8090
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/wallet/getnowblock", opts.HTTPPort)
+	url := apply.ProbeURL(opts.HTTPPort, "/wallet/getnowblock")
 	out, err := target.Get(ctx, tgt, url, 5*time.Second)
 	if err != nil {
 		return CheckResult{

@@ -55,34 +55,61 @@ func registerLifecycleTools(s *mcp.Server) {
 }
 
 func planTool(ctx context.Context, _ *mcp.CallToolRequest, args planArg) (*mcp.CallToolResult, any, error) {
-	// We can build a "would-apply" preview from intent.Load alone
-	// without touching state.json — that's enough to surface the
-	// rendered config + estimated cost. The full diff vs deployed
-	// state lives in cmd/plan.go and pulls from state; extracting it
-	// requires the same RunE-to-pure-function refactor as apply.
-	//
-	// For an MCP-first agent flow this lighter preview is usually
-	// what gets used: validate → render → eyeball → apply. The full
-	// diff stays available via the CLI.
+	// MCP plan mirrors the CLI's state-aware create/no-op/update distinction.
+	// It intentionally reports structural intent changes, while the CLI also
+	// adds rendered-HOCON line diffs.
 	parsed, err := intent.Load(args.Path)
 	if err != nil {
 		return errResult(err)
 	}
+	if len(parsed.Nodes) == 0 {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node"))
+	}
 	node := &parsed.Nodes[0]
+	store, st, err := state.Load(paths.State())
+	if err != nil {
+		return errResult(output.NewError("STATE_ERROR", output.ExitGeneralError, err.Error()))
+	}
+	intentBytes, readErr := os.ReadFile(args.Path)
+	if readErr != nil {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, readErr.Error()))
+	}
+	existing := store.GetNode(st, parsed.Name)
+	if parsed.Target.AutoPorts && existing != nil {
+		rawParsed, rawErr := intent.LoadRaw(args.Path)
+		if rawErr != nil {
+			return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, rawErr.Error()))
+		}
+		if len(rawParsed.Nodes) == 0 {
+			return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node"))
+		}
+		apply.RestoreAutoPorts(node, existing, &rawParsed.Nodes[0])
+	}
+	planned, err := apply.Plan(parsed, existing, intentBytes, apply.FindTemplatesDir())
+	if err != nil {
+		return errResult(err)
+	}
+	changes := make([]map[string]any, 0, len(planned.Changes))
+	for _, c := range planned.Changes {
+		changes = append(changes, map[string]any{"type": c.Type, "field": c.Field, "from": c.From, "to": c.To, "restart_required": c.RestartRequired})
+	}
 	return jsonResult(map[string]any{
-		"name":          parsed.Name,
-		"current_state": "unknown_via_mcp", // until lifecycle extraction
-		"desired_state": "running",
-		"network":       parsed.Network,
-		"runtime":       parsed.Target.Runtime,
-		"node_count":    len(parsed.Nodes),
+		"name":                       parsed.Name,
+		"current_state":              planned.CurrentState,
+		"desired_state":              "running",
+		"changes":                    changes,
+		"destructive":                false,
+		"estimated_downtime_seconds": planned.Downtime,
+		"network":                    parsed.Network,
+		"runtime":                    planned.Runtime,
+		"node_count":                 len(parsed.Nodes),
 		"first_node": map[string]any{
 			"type":    node.Type,
 			"version": node.Version,
 			"memory":  node.Resources.Memory,
 			"ports":   node.Ports,
 		},
-		"note": "MCP plan returns the intent's structural preview. For a full state-aware diff (changes[], destructive, downtime estimate) call `trond plan --intent <path> -o json` from the shell.",
+		"note": "MCP plan returns the same effective intent/config/version hash checks as CLI plan; line-level HOCON diff remains CLI-only.",
 	})
 }
 
@@ -101,6 +128,9 @@ func applyTool(ctx context.Context, _ *mcp.CallToolRequest, args applyArgs) (*mc
 	parsed, err := intent.Load(args.Path)
 	if err != nil {
 		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error()))
+	}
+	if len(parsed.Nodes) == 0 {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node"))
 	}
 
 	// --require-private (early gate, precedence): refuse a non-private intent
@@ -133,19 +163,37 @@ func applyTool(ctx context.Context, _ *mcp.CallToolRequest, args applyArgs) (*mc
 	}
 	defer lock.Release()
 
-	store, err := state.NewStore(paths.State())
-	if err != nil {
-		return errResult(err)
-	}
-	st, err := store.Load()
+	store, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
 
-	intentBytes, _ := os.ReadFile(args.Path)
-	intentHash := apply.IntentHashFromBytes(intentBytes)
 	existing := store.GetNode(st, parsed.Name)
-	if existing != nil && existing.IntentHash != intentHash && !args.AutoApprove {
+	intentBytes, readErr := os.ReadFile(args.Path)
+	if readErr != nil {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, readErr.Error()))
+	}
+	if parsed.Target.AutoPorts && existing != nil {
+		rawParsed, rawErr := intent.LoadRaw(args.Path)
+		if rawErr != nil {
+			return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, rawErr.Error()))
+		}
+		if len(rawParsed.Nodes) == 0 {
+			return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node"))
+		}
+		apply.RestoreAutoPorts(&parsed.Nodes[0], existing, &rawParsed.Nodes[0])
+	}
+	templateDir := apply.FindTemplatesDir()
+	planned, err := apply.Plan(parsed, existing, intentBytes, templateDir)
+	if err != nil {
+		return errResult(err)
+	}
+	intentHash := planned.IntentHash
+	legacyMatch := planned.LegacyMatch
+	if legacyMatch && existing != nil {
+		intentHash = existing.IntentHash
+	}
+	if existing != nil && existing.IntentHash != intentHash && !legacyMatch && !args.AutoApprove {
 		return errResult(output.NewError("HUMAN_REQUIRED", output.ExitHumanRequired,
 			fmt.Sprintf("Changes detected for node %q; pass auto_approve=true to proceed", parsed.Name)).
 			WithSuggestions("Call the 'plan' tool first to inspect the diff",
@@ -159,9 +207,9 @@ func applyTool(ctx context.Context, _ *mcp.CallToolRequest, args applyArgs) (*mc
 		State:          st,
 		IntentHash:     intentHash,
 		Existing:       existing,
-		TemplateDir:    "",
+		TemplateDir:    templateDir,
 		DeploymentsDir: paths.Deployments(),
-		EnvVars:        resolveEnvVars(&parsed.Nodes[0]),
+		EnvVars:        apply.ResolveEnvVars(&parsed.Nodes[0]),
 		Wait:           args.Wait,
 		WaitTimeout:    5 * time.Minute,
 		RequirePrivate: args.RequirePrivate || guard.Requested(),
@@ -211,28 +259,7 @@ func enforcePrivateForRecordedNode(requested bool, name string) error {
 // internal/mcp package doesn't import cmd/. Limited to local + ssh
 // since those are the only two intent.Target.Type values.
 func resolveTarget(parsed *intent.Intent) (target.Target, error) {
-	switch parsed.Target.Type {
-	case "ssh":
-		t := target.NewSSHTarget(parsed.Target.Host, parsed.Target.Port, parsed.Target.User, parsed.Target.IdentityFile)
-		if err := t.Connect(); err != nil {
-			return nil, err
-		}
-		return t, nil
-	default:
-		return target.NewLocalTarget(), nil
-	}
-}
-
-// resolveEnvVars mirrors cmd/apply.go's helper for the same reason.
-// Pulls the witness key out of the operator's environment by name.
-func resolveEnvVars(node *intent.NodeSpec) map[string]string {
-	env := map[string]string{}
-	if node.WitnessKeyEnv != "" {
-		if v := os.Getenv(node.WitnessKeyEnv); v != "" {
-			env[node.WitnessKeyEnv] = v
-		}
-	}
-	return env
+	return target.FromIntent(parsed)
 }
 
 func ptrTrue() *bool { v := true; return &v }

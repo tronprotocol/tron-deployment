@@ -9,6 +9,40 @@ import (
 	"testing"
 )
 
+func TestAllowedEnvPassthroughIntentOverridesHost(t *testing.T) {
+	t.Setenv("GRADLE_OPTS", "host-value")
+	got := allowedEnvPassthrough(map[string]string{"GRADLE_OPTS": "intent-value"})
+	found := false
+	for _, value := range got {
+		if value == "GRADLE_OPTS=intent-value" {
+			found = true
+		}
+		if value == "GRADLE_OPTS=host-value" {
+			t.Fatalf("host value leaked after intent override: %v", got)
+		}
+	}
+	if !found {
+		t.Fatalf("intent value missing: %v", got)
+	}
+}
+
+func TestHostBuildEnvIntentOverridesHostWithoutDuplicate(t *testing.T) {
+	t.Setenv("GRADLE_OPTS", "host-value")
+	got := hostBuildEnv(map[string]string{"GRADLE_OPTS": "intent-value"})
+	count := 0
+	for _, value := range got {
+		if strings.HasPrefix(value, "GRADLE_OPTS=") {
+			count++
+			if value != "GRADLE_OPTS=intent-value" {
+				t.Fatalf("host value retained: %v", got)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("GRADLE_OPTS entries = %d, want one: %v", count, got)
+	}
+}
+
 // TestResolveHostIdentity pins the contract `realHostRunner` relies
 // on: the function returns a stable digest with the canonical
 // `sha256:` prefix + a human-readable ref starting with `host:`. Two

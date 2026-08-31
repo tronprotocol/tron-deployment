@@ -26,7 +26,7 @@
       "format": "date-time",
       "description": "Timestamp of the last apply that modified state."
     },
-    "intent_hash":  { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "intent_hash":  { "type": "string", "pattern": "^(v2:)?[0-9a-f]{64}$" },
     "config_hash":  { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "api_endpoints": {
       "type": "object",
@@ -93,6 +93,20 @@
     "lag": {
       "type": "integer",
       "description": "Block delta between local height and the highest height the node has seen across peers; only present from live probe."
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "Prometheus + Grafana stack ports for nodes deployed with --monitor. Host is implicit: 127.0.0.1 for local targets, target.host for SSH. NOTE: unlike inspect output's monitoring object, this shape carries a live probed `status` instead of an `enabled` flag.",
+      "required": ["prometheus_port", "grafana_port", "status"],
+      "properties": {
+        "prometheus_port": { "type": "integer", "description": "Host port the Prometheus container is bound to." },
+        "grafana_port":    { "type": "integer", "description": "Host port the Grafana container is bound to." },
+        "status":          {
+          "type": "string",
+          "enum": ["running", "stopped", "unknown"],
+          "description": "Best-effort health of the monitoring stack (docker compose ps state); 'unknown' when the stack can't be reached."
+        }
+      }
     },
     "probe_error": {
       "type": "string",

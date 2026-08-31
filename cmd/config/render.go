@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/render"
@@ -74,7 +75,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 	}
 
 	// Find templates directory (relative to binary or working directory)
-	templateDir := findTemplateDir()
+	templateDir := apply.FindTemplatesDir()
 
 	rendered := make([]renderedNode, 0, len(parsed.Nodes))
 	anyRedacted := false
@@ -100,9 +101,10 @@ func runRender(cmd *cobra.Command, args []string) error {
 		// host memory, so we size from the intent's resources.memory and
 		// default to JDK 17 — both are safe static assumptions for the
 		// `config render` preview path.
-		memGB := render.ParseMemoryGB(node.Resources.Memory)
-		if memGB == 0 {
-			memGB = 16
+		memGB, err := render.ParseMemoryGB(node.Resources.Memory)
+		if err != nil {
+			return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+				fmt.Sprintf("invalid resources.memory %q: %v", node.Resources.Memory, err))
 		}
 		jvmArgs := render.JVMArgsString(memGB, 17, node.JVM)
 
@@ -135,7 +137,11 @@ func runRender(cmd *cobra.Command, args []string) error {
 		// the rendered bodies inline; that doesn't preclude also
 		// writing them.
 		if renderOutputDir != "" {
-			if err := writeRenderedFiles(renderOutputDir, parsed.Name, hocon, composeYAML, systemdUnit); err != nil {
+			nodeDir := renderOutputDir
+			if len(parsed.Nodes) > 1 {
+				nodeDir = filepath.Join(renderOutputDir, fmt.Sprintf("node%d", i))
+			}
+			if err := writeRenderedFiles(nodeDir, parsed.Name, hocon, composeYAML, systemdUnit); err != nil {
 				return err
 			}
 		}
@@ -261,20 +267,4 @@ func writeSecretFile(path string, data []byte) (err error) {
 		return err
 	}
 	return nil
-}
-
-// findTemplateDir prefers the TROND_TEMPLATES_DIR env var, then falls back to
-// ./templates. An empty return value tells render.RenderHOCON to use the
-// embedded copy — release binaries work without any co-located files.
-func findTemplateDir() string {
-	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
-		return d
-	}
-	candidates := []string{"templates", "./templates"}
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			return c
-		}
-	}
-	return ""
 }

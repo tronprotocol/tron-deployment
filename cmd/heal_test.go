@@ -1,10 +1,22 @@
 package cmd
 
 import (
+	"context"
 	"testing"
 
 	"github.com/tronprotocol/tron-deployment/internal/diagnosis"
+	"github.com/tronprotocol/tron-deployment/internal/paths"
+	"github.com/tronprotocol/tron-deployment/internal/state"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
+
+type captureNetworkChecker struct{ got *string }
+
+func (c captureNetworkChecker) Name() string { return "capture_network" }
+func (c captureNetworkChecker) Run(_ context.Context, _ target.Target, opts diagnosis.CheckOpts) diagnosis.CheckResult {
+	*c.got = opts.Network
+	return diagnosis.CheckResult{Name: c.Name(), Status: diagnosis.StatusPass, Message: "captured"}
+}
 
 // TestProposeHealAction pins the (check, current state) → action
 // mapping for `trond auto-heal`. Every case here is a contract:
@@ -80,5 +92,62 @@ func TestProposeHealAction(t *testing.T) {
 				t.Errorf("action: got %q, want %q", got.Action, tc.wantAction)
 			}
 		})
+	}
+}
+
+func TestRunDiagnosePassesRecordedNetworkToChecker(t *testing.T) {
+	paths.SetBaseDir(t.TempDir())
+	t.Cleanup(func() { paths.SetBaseDir("") })
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(&state.DeploymentState{Nodes: []state.ManagedNode{{
+		Name: "diag-net", Network: "private", Runtime: "docker", Status: "stopped",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	old := diagnoseCheckers
+	diagnoseCheckers = func() []diagnosis.Checker { return []diagnosis.Checker{captureNetworkChecker{got: &got}} }
+	t.Cleanup(func() { diagnoseCheckers = old })
+
+	cmd := diagnoseCmd
+	cmd.SetArgs([]string{"diag-net"})
+	if err := runDiagnose(cmd, []string{"diag-net"}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "private" {
+		t.Fatalf("checker network=%q, want private", got)
+	}
+}
+
+func TestRunAutoHealPassesRecordedNetworkToChecker(t *testing.T) {
+	paths.SetBaseDir(t.TempDir())
+	t.Cleanup(func() { paths.SetBaseDir("") })
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(&state.DeploymentState{Nodes: []state.ManagedNode{{
+		Name: "heal-net", Network: "nile", Runtime: "docker", Status: "stopped",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	old := healCheckers
+	healCheckers = func() []diagnosis.Checker { return []diagnosis.Checker{captureNetworkChecker{got: &got}} }
+	t.Cleanup(func() { healCheckers = old })
+
+	oldDryRun := healDryRun
+	healDryRun = true
+	t.Cleanup(func() { healDryRun = oldDryRun })
+	cmd := autoHealCmd
+	cmd.SetContext(context.Background())
+	if err := runAutoHeal(cmd, []string{"heal-net"}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "nile" {
+		t.Fatalf("checker network=%q, want nile", got)
 	}
 }

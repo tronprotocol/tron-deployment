@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/snapshot"
 )
@@ -123,6 +125,9 @@ func snapshotJobsTool(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) 
 }
 
 func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args snapshotDownloadArgs) (*mcp.CallToolResult, any, error) {
+	if args.Dest == "" {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, "dest is required"))
+	}
 	src, err := pickSource(args.Domain, args.Network, args.Kind, args.Region, "")
 	if err != nil {
 		return errResult(err)
@@ -135,10 +140,6 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 			return errResult(err)
 		}
 		backup = latest
-	}
-
-	if args.Dest == "" {
-		return errResult(fmt.Errorf("dest is required"))
 	}
 
 	kind := snapshot.DBKind(args.Kind)
@@ -186,6 +187,10 @@ func snapshotDownloadTool(ctx context.Context, req *mcp.CallToolRequest, args sn
 
 	res, err := snapshot.Download(ctx, opts)
 	if err != nil {
+		var running *snapshot.RunningNodeDestinationError
+		if errors.As(err, &running) {
+			return errResult(output.NewError("NODE_RUNNING", output.ExitGeneralError, err.Error()).WithSuggestions("Stop the node first: trond stop " + running.NodeName))
+		}
 		return errResult(err)
 	}
 	payload := map[string]any{

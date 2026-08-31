@@ -14,7 +14,8 @@
 #   6. Starts (or hot-restarts) the node.
 #
 # Re-running with NO source changes hits cache and finishes in seconds.
-# Run `trond build prune --keep 3` to bound cache disk usage.
+# Run `trond build prune --older-than 168h --keep-last 3 --confirm`
+# to bound cache disk usage.
 
 name: dev-fullnode
 network: nile

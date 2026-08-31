@@ -7,12 +7,15 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tronprotocol/tron-deployment/internal/guard"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 var bootstrapIntentPath string
+
+var bootstrapResolveTarget = resolveTarget
 
 var bootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
@@ -33,8 +36,11 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
+	if err := guard.Enforce(parsed.Network); err != nil {
+		return err
+	}
 
-	tgt, err := resolveTarget(parsed)
+	tgt, err := bootstrapResolveTarget(parsed)
 	if err != nil {
 		return exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
 	}

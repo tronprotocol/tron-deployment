@@ -93,10 +93,16 @@ blockchain nodes (mainnet / Nile testnet / private networks). Available
 tools:
 
   Read-only:    doctor, version, list, status, inspect, health,
-                preflight, knowledge, snapshot_sources, snapshot_list,
-                snapshot_jobs
-  Validation:   config_validate, config_render, plan, diagnose
+                knowledge_list, knowledge_get, snapshot_sources,
+                snapshot_list, snapshot_jobs
+  Validation:   config_validate, config_render, verify_config, plan,
+                diagnose
   Destructive:  apply, snapshot_download, auto_heal
+
+  Build cache (list/inspect read-only; prune deletes):
+                build_list, build_inspect, build_prune
+  Shadow-fork (mutates a halted node data dir in place):
+                shadow_fork_mutate
 
 For deploy / diagnose / snapshot / private-network workflows, follow
 the canonical chains documented in AGENTS.md (the TRON deployment
@@ -114,8 +120,8 @@ Beyond tools, this server exposes:
     trond://nodes/{name}/conf         — one node's live HOCON conf
 
   Prompts (slash-command workflows the user picks):
-    deploy_fullnode         — validate → plan → apply --wait → status
-    diagnose_failing_node   — status → diagnose → logs → suggest
+    deploy_fullnode         — config_validate → plan → apply → status
+    diagnose_failing_node   — status → diagnose → health
     setup_private_network   — multi-node bootstrap with SR_PRIVATE_KEY
     recover_failed_upgrade  — diagnose → rollback → verify
 

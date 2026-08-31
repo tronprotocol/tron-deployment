@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/tronprotocol/tron-deployment/internal/output"
 )
@@ -27,18 +26,4 @@ func notFoundWithSuggestions(resource, name string, suggestions ...string) *outp
 	return output.NewError("NOT_FOUND", output.ExitGeneralError,
 		fmt.Sprintf("%s %q not found", resource, name)).
 		WithSuggestions(suggestions...)
-}
-
-// httpURL formats host+port into the http://<host>:<p> URL we surface
-// to agents. Agents can re-use this in their own follow-up probes
-// (e.g. `wait --http <url>`). For ssh targets the host is the recorded
-// remote host; internal probes that dial through the target pass
-// 127.0.0.1 (the tunnel lands on the remote loopback).
-func httpURL(host string, port int) string {
-	return "http://" + host + ":" + strconv.Itoa(port)
-}
-
-// grpcAddr formats the host:port grpc endpoint.
-func grpcAddr(host string, port int) string {
-	return host + ":" + strconv.Itoa(port)
 }

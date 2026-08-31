@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -42,13 +41,7 @@ func init() {
 	rootCmd.AddCommand(planCmd)
 }
 
-type planChange struct {
-	Type            string `json:"type"`
-	Field           string `json:"field"`
-	From            any    `json:"from,omitempty"`
-	To              any    `json:"to,omitempty"`
-	RestartRequired bool   `json:"restart_required"`
-}
+type planChange = apply.PlanChange
 
 func runPlan(cmd *cobra.Command, args []string) error {
 	outputFmt, _ := cmd.Flags().GetString("output")
@@ -58,12 +51,11 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
+	if len(parsed.Nodes) == 0 {
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node")
+	}
 
-	// 2. Compute intent hash
-	intentData, _ := os.ReadFile(planIntentPath)
-	intentHash := apply.IntentHashFromBytes(intentData)
-
-	// 3. Load current state
+	// 2. Load current state
 	store, err := state.NewStore(statePath())
 	if err != nil {
 		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error())
@@ -75,85 +67,33 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	}
 
 	existing := store.GetNode(deployState, parsed.Name)
-
-	// 4. Render config to compute config hash
-	templateDir := findTemplatesDir()
-	node := &parsed.Nodes[0]
-
-	rendered, err := render.RenderHOCONWithSecrets(templateDir, parsed, node)
+	if parsed.Target.AutoPorts && existing != nil {
+		rawParsed, rawErr := intent.LoadRaw(planIntentPath)
+		if rawErr != nil {
+			return exitWithError("VALIDATION_ERROR", output.ExitValidationError, rawErr.Error())
+		}
+		if len(rawParsed.Nodes) == 0 {
+			return exitWithError("VALIDATION_ERROR", output.ExitValidationError, "intent must contain at least one node")
+		}
+		apply.RestoreAutoPorts(&parsed.Nodes[0], existing, &rawParsed.Nodes[0])
+	}
+	rawIntent, err := os.ReadFile(planIntentPath)
 	if err != nil {
-		return exitWithError("RENDER_ERROR", output.ExitGeneralError, err.Error())
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
-	// The REAL bytes: config_hash must match what apply deploys, and the
-	// diff below must compare real values so a rotated witness key is
-	// still detected. Nothing from here reaches the output un-redacted —
-	// simpleHOCONDiff redacts every line at the point it emits it.
-	hoconConfig := rendered.Deployable()
-	configHash := apply.IntentHashFromBytes([]byte(hoconConfig))
-
-	// 5. Diff
-	var changes []planChange
-	destructive := false
-	downtime := 0
-
-	if existing == nil {
-		// New deployment
-		changes = append(changes, planChange{
-			Type:  "create",
-			Field: "node",
-			To:    parsed.Name,
-		})
-	} else {
-		// Check for changes
-		if existing.IntentHash != intentHash {
-			changes = append(changes, planChange{
-				Type:            "update",
-				Field:           "intent",
-				From:            existing.IntentHash[:12] + "...",
-				To:              intentHash[:12] + "...",
-				RestartRequired: true,
-			})
-		}
-		if existing.ConfigHash != configHash {
-			changes = append(changes, planChange{
-				Type:            "update",
-				Field:           "config",
-				From:            existing.ConfigHash[:12] + "...",
-				To:              configHash[:12] + "...",
-				RestartRequired: true,
-			})
-			downtime = 30 // Estimated restart time
-		}
-		if existing.Version != node.Version && node.Version != "latest" {
-			changes = append(changes, planChange{
-				Type:            "update",
-				Field:           "version",
-				From:            existing.Version,
-				To:              node.Version,
-				RestartRequired: true,
-			})
-			downtime = 60
-		}
-	}
-
-	currentState := "not deployed"
-	if existing != nil {
-		currentState = existing.Status
-	}
-
-	runtimeType := parsed.Target.Runtime
-	if runtimeType == "" {
-		runtimeType = "docker"
+	planned, err := apply.Plan(parsed, existing, rawIntent, apply.FindTemplatesDir())
+	if err != nil {
+		return err
 	}
 
 	result := map[string]any{
 		"name":                       parsed.Name,
-		"current_state":              currentState,
+		"current_state":              planned.CurrentState,
 		"desired_state":              "running",
-		"changes":                    changes,
-		"destructive":                destructive,
-		"estimated_downtime_seconds": downtime,
-		"runtime":                    runtimeType,
+		"changes":                    planned.Changes,
+		"destructive":                false,
+		"estimated_downtime_seconds": planned.Downtime,
+		"runtime":                    planned.Runtime,
 		"network":                    parsed.Network,
 	}
 
@@ -164,10 +104,10 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	// (deployment dir cleaned, etc.).
 	var diffLines []string
 	if planShowDiff && existing != nil {
-		deployedPath := filepath.Join(paths.Deployments(), parsed.Name, parsed.Name+".conf")
+		deployedPath := paths.DeploymentConfig(parsed.Name)
 		if data, err := os.ReadFile(deployedPath); err == nil {
-			diffLines = simpleHOCONDiff(strings.Split(string(data), "\n"),
-				strings.Split(hoconConfig, "\n"))
+			diffLines = render.DiffLines(strings.Split(string(data), "\n"),
+				strings.Split(string(planned.Config), "\n"), 0)
 		}
 		// JSON consumers always get the field (possibly empty array)
 		// so they can distinguish "no changes" from "diff was not
@@ -178,55 +118,13 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	if outputFmt == "json" {
 		output.WriteJSON(os.Stdout, result)
 	} else {
-		printPlanText(result, changes)
+		printPlanText(result, planned.Changes)
 		if planShowDiff {
 			printDiffSection(existing, diffLines)
 		}
 	}
 
 	return nil
-}
-
-// simpleHOCONDiff is a deliberately tiny line-by-line differ. Same
-// shape as cmd/config/diff.go::simpleDiff but private to plan to
-// avoid coupling — both could call into a shared internal/diff
-// helper later if a third caller appears.
-//
-// Secret handling: the comparison runs on the raw lines (so a witness
-// key that actually changed is still reported as drift), but every
-// line is passed through render.RedactWitnessLine before it is
-// emitted. This differ is positional and LCS-free, so a line-count
-// change anywhere above the `localwitness` assignment misaligns the
-// tail and would otherwise push the SR private key straight into
-// stdout and into result["config_diff"].
-func simpleHOCONDiff(old, new []string) []string {
-	// Redact whole-slice: a multi-line `localwitness = [` array keeps its
-	// key on a line that does not itself start with the key name.
-	oldR := render.RedactWitnessLines(old)
-	newR := render.RedactWitnessLines(new)
-	var diffs []string
-	maxLen := len(old)
-	if len(new) > maxLen {
-		maxLen = len(new)
-	}
-	for i := 0; i < maxLen; i++ {
-		var oldLine, newLine string
-		if i < len(old) {
-			oldLine = old[i]
-		}
-		if i < len(new) {
-			newLine = new[i]
-		}
-		if oldLine != newLine {
-			if oldLine != "" {
-				diffs = append(diffs, "- "+oldR[i])
-			}
-			if newLine != "" {
-				diffs = append(diffs, "+ "+newR[i])
-			}
-		}
-	}
-	return diffs
 }
 
 // printDiffSection renders the line diff under the changes section

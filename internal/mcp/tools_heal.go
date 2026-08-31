@@ -25,6 +25,24 @@ type autoHealArgs struct {
 	DryRun bool   `json:"dry_run,omitempty" jsonschema:"if true, propose actions without executing"`
 }
 
+// Kept as a tiny seam for the state-save failure contract; production uses
+// Store.Save directly, while tests can exercise result handling without
+// requiring a live Docker/systemd runtime.
+var saveHealState = func(store *state.Store, st *state.DeploymentState) error {
+	return store.Save(st)
+}
+
+var runHealAction = mcpRunHealAction
+var healCheckers = diagnosis.AllCheckers
+
+// healRuntimeForNode is a test injection seam; production default selects jar or Docker runtime.
+var healRuntimeForNode = func(tgt target.Target, node *state.ManagedNode) runtime.Runtime {
+	if node.Runtime == "jar" {
+		return runtime.NewJarRuntime(tgt)
+	}
+	return runtime.NewDockerRuntime(tgt, paths.Deployments())
+}
+
 func registerHealTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "auto_heal",
@@ -51,11 +69,7 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 	}
 	defer lock.Release()
 
-	store, err := state.NewStore(paths.State())
-	if err != nil {
-		return errResult(err)
-	}
-	st, err := store.Load()
+	store, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
@@ -80,7 +94,7 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 		}
 	}
 
-	tgt, err := mcpResolveTargetFromNode(node)
+	tgt, err := target.FromManagedNode(node)
 	if err != nil {
 		return errResult(err)
 	}
@@ -92,6 +106,7 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 	defer cancel()
 	opts := diagnosis.CheckOpts{
 		NodeName:    node.Name,
+		Network:     node.Network,
 		Runtime:     node.Runtime,
 		HTTPPort:    node.HTTPPort,
 		GRPCPort:    node.GRPCPort,
@@ -103,7 +118,7 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 		skipped      []map[string]any
 		stillFailing []diagnosis.CheckResult
 	)
-	for _, c := range diagnosis.AllCheckers() {
+	for _, c := range healCheckers() {
 		r := c.Run(probeCtx, tgt, opts)
 		if r.Status != diagnosis.StatusFail {
 			continue
@@ -127,7 +142,7 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 			})
 			continue
 		}
-		err := mcpRunHealAction(ctx, tgt, node, action)
+		err := runHealAction(ctx, tgt, node, action)
 		entry := map[string]any{
 			"check":  r.Name,
 			"action": action.action,
@@ -141,18 +156,33 @@ func autoHealTool(ctx context.Context, _ *mcp.CallToolRequest, args autoHealArgs
 			entry["message"] = action.message
 			node.Status = "running"
 			store.UpsertNode(st, *node)
-			_ = store.Save(st)
+			if saveErr := saveHealState(store, st); saveErr != nil {
+				recordHealStateSaveFailure(saveErr, entry, r, &stillFailing)
+			}
 		}
 		healed = append(healed, entry)
 	}
 
-	return jsonResult(map[string]any{
+	result := map[string]any{
 		"name":          args.Name,
 		"dry_run":       args.DryRun,
 		"healed":        healed,
 		"skipped":       skipped,
 		"still_failing": stillFailing,
-	})
+	}
+	if len(healed) == 0 && len(skipped) == 0 && len(stillFailing) == 0 {
+		result["result"] = "no_action"
+	}
+	return jsonResult(result)
+}
+
+func recordHealStateSaveFailure(err error, entry map[string]any, check diagnosis.CheckResult, stillFailing *[]diagnosis.CheckResult) {
+	if err == nil {
+		return
+	}
+	entry["result"] = "failed"
+	entry["message"] = "state save failed: " + err.Error()
+	*stillFailing = append(*stillFailing, check)
 }
 
 type mcpHealAction struct {
@@ -173,7 +203,7 @@ func mcpProposeHealAction(r diagnosis.CheckResult, nodeStatus string) (mcpHealAc
 }
 
 func mcpRunHealAction(ctx context.Context, tgt target.Target, node *state.ManagedNode, action mcpHealAction) error {
-	rt := runtime.NewDockerRuntime(tgt, paths.Deployments())
+	rt := healRuntimeForNode(tgt, node)
 	if action.action == "start" {
 		return rt.Start(ctx, node.Name)
 	}

@@ -145,6 +145,36 @@ func TestRenderHOCON_DefaultHTTPPortsUnchanged(t *testing.T) {
 	}
 }
 
+func TestRenderHOCON_SolidityGRPCPortOverride(t *testing.T) {
+	i := &intent.Intent{Name: "grpc", Network: "mainnet"}
+	n := &intent.NodeSpec{Type: "fullnode", Ports: intent.PortMapping{SolidityGRPC: 56061}}
+	out, err := RenderHOCONWithSecrets("", i, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Deployable(), "solidityPort = 56061") {
+		t.Fatalf("solidity gRPC port not rendered: %s", out.Deployable())
+	}
+}
+
+func TestRenderHOCON_SolidityPBFTCollision(t *testing.T) {
+	n := &intent.NodeSpec{Type: "fullnode", Ports: intent.PortMapping{HTTP: 8091}}
+	i := &intent.Intent{Name: "collision", Network: "mainnet"}
+	_, err := RenderHOCON("", i, n)
+	if err == nil || !strings.Contains(err.Error(), "solidityPort") {
+		t.Fatalf("expected collision, got %v", err)
+	}
+}
+
+func TestRenderHOCON_SolidityPBFTDirectCollision(t *testing.T) {
+	n := &intent.NodeSpec{Type: "fullnode", Ports: intent.PortMapping{SolidityHTTP: 8092}}
+	i := &intent.Intent{Name: "direct-collision", Network: "mainnet"}
+	_, err := RenderHOCON("", i, n)
+	if err == nil || !strings.Contains(err.Error(), "solidityPort") || !strings.Contains(err.Error(), "PBFTPort") {
+		t.Fatalf("expected solidity/PBFT collision, got %v", err)
+	}
+}
+
 // TestRenderHOCON_JSONRPCPortAndEnable locks down the #165 fix:
 // features.jsonrpc=true + ports.jsonrpc=NNNNN must produce BOTH
 // `httpFullNodeEnable = true` (already worked) AND

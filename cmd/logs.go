@@ -46,8 +46,13 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return exitWithError("LOGS_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to get logs for %s: %v", name, err))
 	}
-	defer reader.Close()
-
-	io.Copy(os.Stdout, reader)
+	_, copyErr := io.Copy(os.Stdout, reader)
+	closeErr := reader.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
 	return nil
 }

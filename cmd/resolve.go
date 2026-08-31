@@ -188,16 +188,11 @@ func resolveNode(name string, forWrite bool) (*nodeContext, error) {
 }
 
 func resolveTargetFromNode(node *state.ManagedNode) (target.Target, error) {
-	switch node.Target.Type {
-	case "ssh":
-		t := target.NewSSHTarget(node.Target.Host, node.Target.Port, node.Target.User, node.Target.IdentityFile)
-		if err := t.Connect(); err != nil {
-			return nil, fmt.Errorf("ssh connect to %s: %w", node.Target.Host, err)
-		}
-		return t, nil
-	default:
-		return target.NewLocalTarget(), nil
+	t, err := target.FromManagedNode(node)
+	if err != nil && node.Target.Type == "ssh" {
+		return nil, fmt.Errorf("ssh connect to %s: %w", node.Target.Host, err)
 	}
+	return t, err
 }
 
 func resolveRuntimeForNode(node *state.ManagedNode, tgt target.Target) runtime.Runtime {

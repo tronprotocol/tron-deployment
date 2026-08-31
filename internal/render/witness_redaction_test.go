@@ -215,6 +215,7 @@ func TestRendered_FormattingCannotSpillTheKey(t *testing.T) {
 func TestIsWitnessKeyLine_ExactKeyMatch(t *testing.T) {
 	match := []string{
 		`localwitness = ["deadbeef"]`,
+		`localwitness : ["deadbeef"]`,
 		`localwitness=["deadbeef"]`,
 		`  localwitness  =  [ deadbeef ]`,
 		"\tlocalwitness\t=\t[\"deadbeef\"]",
@@ -253,6 +254,10 @@ func TestRedactWitnessLine(t *testing.T) {
 	}
 	if got != `localwitness = ["<REDACTED>"]` {
 		t.Errorf("unexpected marker: %q", got)
+	}
+	got = RedactWitnessLine(fmt.Sprintf(`localwitness : [%q]`, probeWitnessKey))
+	if strings.Contains(got, probeWitnessKey) || got != `localwitness = ["<REDACTED>"]` {
+		t.Errorf("colon-separated witness line was not redacted: %q", got)
 	}
 	// Indent is preserved so redacted diff lines stay aligned.
 	if got := RedactWitnessLine(`    localwitness = ["x"]`); got != `    localwitness = ["<REDACTED>"]` {

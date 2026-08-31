@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
+	"sync"
 	"time"
 )
 
@@ -24,9 +26,76 @@ type Dialer interface {
 func HTTPClient(t Target, timeout time.Duration) *http.Client {
 	client := &http.Client{Timeout: timeout}
 	if d, ok := t.(Dialer); ok {
-		client.Transport = &http.Transport{DialContext: d.DialContext}
+		if _, local := t.(*LocalTarget); local {
+			client.Transport = localTransport(d)
+		} else {
+			client.Transport = targetTransport(t, d)
+		}
 	}
 	return client
+}
+
+var targetTransports sync.Map
+var localTransportOnce sync.Once
+var localTransportMu sync.Mutex
+var sharedLocalTransport *http.Transport
+
+func localTransport(d Dialer) *http.Transport {
+	localTransportMu.Lock()
+	defer localTransportMu.Unlock()
+	localTransportOnce.Do(func() {
+		sharedLocalTransport = http.DefaultTransport.(*http.Transport).Clone()
+		sharedLocalTransport.DialContext = d.DialContext
+	})
+	return sharedLocalTransport
+}
+
+func targetTransport(t Target, d Dialer) *http.Transport {
+	key := transportKey{label: t.String(), identity: targetIdentity(t)}
+	if value, ok := targetTransports.Load(key); ok {
+		return value.(*http.Transport)
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = d.DialContext
+	actual, loaded := targetTransports.LoadOrStore(key, tr)
+	if loaded {
+		tr.CloseIdleConnections()
+	}
+	return actual.(*http.Transport)
+}
+
+func unregisterTransport(t Target) {
+	key := transportKey{label: t.String(), identity: targetIdentity(t)}
+	if value, ok := targetTransports.LoadAndDelete(key); ok {
+		value.(*http.Transport).CloseIdleConnections()
+	}
+}
+
+type transportKey struct {
+	label    string
+	identity uintptr
+}
+
+func targetIdentity(t Target) uintptr {
+	v := reflect.ValueOf(t)
+	if v.IsValid() && v.Kind() == reflect.Pointer {
+		return v.Pointer()
+	}
+	return 0
+}
+
+// CloseIdleConnections releases pooled connections held by target-aware HTTP
+// transports. Long-lived callers should invoke it during shutdown.
+func CloseIdleConnections() {
+	localTransportMu.Lock()
+	defer localTransportMu.Unlock()
+	if sharedLocalTransport != nil {
+		sharedLocalTransport.CloseIdleConnections()
+	}
+	targetTransports.Range(func(_, value any) bool {
+		value.(*http.Transport).CloseIdleConnections()
+		return true
+	})
 }
 
 // EndpointHost returns the host used when reporting a target endpoint.
@@ -121,7 +190,8 @@ type Target interface {
 	// ReadFile reads a file from the target.
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 
-	// WriteFile writes data to a file on the target.
+	// WriteFile writes data to a file on the target. It must enforce perm on
+	// both newly-created and existing files before writing their contents.
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
 
 	// DiskFree returns available disk space in bytes at the given path.
@@ -151,4 +221,47 @@ type Target interface {
 
 	// String returns a human-readable description of the target.
 	String() string
+}
+
+// StreamExec runs a command and returns its live stdout/stderr stream.
+// Targets that cannot provide a stream should continue using Exec.
+type StreamExec interface {
+	StreamExec(ctx context.Context, cmd string, args ...string) (io.ReadCloser, error)
+}
+
+type streamReader struct {
+	io.ReadCloser
+	wait       func() error
+	terminate  func()
+	streamDone <-chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
+}
+
+func (r *streamReader) Close() error {
+	r.closeOnce.Do(func() {
+		if r.streamDone == nil {
+			r.terminate()
+		} else {
+			select {
+			case <-r.streamDone:
+			default:
+				r.terminate()
+			}
+		}
+		err := r.ReadCloser.Close()
+		waitErr := r.wait()
+		if err != nil {
+			r.closeErr = err
+		} else {
+			r.closeErr = waitErr
+		}
+	})
+	return r.closeErr
+}
+
+// Permissions is an optional target capability for tightening an existing
+// file without rewriting its contents.
+type Permissions interface {
+	Chmod(ctx context.Context, path string, perm os.FileMode) error
 }

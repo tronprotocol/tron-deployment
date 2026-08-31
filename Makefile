@@ -41,7 +41,7 @@ endif
 
 GOFLAGS    ?=
 
-.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas sync-knowledge snapshot-schema-baseline update-render-golden docs man cover vuln bootstrap-go build-replay install-replay build-txgen install-txgen build-txgen-falcon install-txgen-falcon
+.PHONY: build test lint e2e verify verify-fast build-all clean clean-all fmt vet tidy sync-templates sync-schemas sync-knowledge snapshot-schema-baseline update-render-golden docs man cover vuln bootstrap-go build-replay install-replay build-txgen install-txgen build-txgen-falcon install-txgen-falcon
 
 ## bootstrap-go: Download + verify the project-local Go toolchain
 ##               (idempotent; safe to re-run; no-op if already current)
@@ -67,6 +67,15 @@ lint: $(GO_BOOTSTRAP)
 ## e2e: Run end-to-end tests (requires Docker)
 e2e: $(GO_BOOTSTRAP)
 	$(GO) test ./... -tags=e2e -race -count=1 -timeout 10m
+
+## verify: Pre-push gate — lint + unit tests + e2e (requires Docker daemon).
+## Mirrors the CI jobs (golangci-lint, Test + coverage, e2e) so a green
+## local run means a green CI; run this before pushing.
+verify: lint test e2e
+
+## verify-fast: Fast pre-push gate — lint + unit tests (no Docker required).
+## Same lint and unit jobs as CI; skips only the Docker-dependent e2e job.
+verify-fast: lint test
 
 ## build-all: Cross-compile for all supported platforms
 build-all: $(GO_BOOTSTRAP)

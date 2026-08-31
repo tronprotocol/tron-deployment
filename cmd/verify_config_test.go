@@ -3,6 +3,8 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
 // TestLineDiff_PinsContractShape exercises the small diff helper
@@ -60,7 +62,7 @@ func TestLineDiff_PinsContractShape(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := lineDiff(tc.live, tc.desired, tc.context)
+			got := render.DiffText(tc.live, tc.desired, tc.context)
 			if len(got) != tc.wantLen {
 				t.Fatalf("len: got %d, want %d\nactual:\n%s",
 					len(got), tc.wantLen, strings.Join(got, "\n"))

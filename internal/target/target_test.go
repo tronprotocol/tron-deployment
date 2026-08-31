@@ -2,12 +2,20 @@ package target
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -121,6 +129,153 @@ func TestHTTPClientFallsBackForNonDialer(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
+}
+
+func TestHTTPClientReusesTransportPerTarget(t *testing.T) {
+	target := NewLocalTarget()
+	first := HTTPClient(target, time.Second)
+	second := HTTPClient(target, time.Second)
+	if first.Transport != second.Transport {
+		t.Fatalf("HTTPClient transports differ: %p vs %p", first.Transport, second.Transport)
+	}
+	if _, ok := first.Transport.(*http.Transport); !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", first.Transport)
+	}
+}
+
+func TestHTTPClientDoesNotShareTransportAcrossTargetInstances(t *testing.T) {
+	firstTarget := NewSSHTarget("same", 22, "user", "")
+	secondTarget := NewSSHTarget("same", 22, "user", "")
+	first := HTTPClient(firstTarget, time.Second)
+	second := HTTPClient(secondTarget, time.Second)
+	if first.Transport == second.Transport {
+		t.Fatal("distinct target instances must not share a transport")
+	}
+}
+
+func TestHTTPClientLocalTargetsShareTransport(t *testing.T) {
+	if HTTPClient(NewLocalTarget(), time.Second).Transport != HTTPClient(NewLocalTarget(), time.Second).Transport {
+		t.Fatal("LocalTarget instances should use shared transport")
+	}
+}
+
+func TestSSHTargetCloseUnregistersTransport(t *testing.T) {
+	target := NewSSHTarget("same", 22, "user", "")
+	first := HTTPClient(target, time.Second).Transport
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second := HTTPClient(target, time.Second).Transport
+	if first == second {
+		t.Fatal("transport reused after target Close")
+	}
+}
+
+func TestCloseIdleConnectionsClosesCachedTransports(t *testing.T) {
+	CloseIdleConnections()
+	if sharedLocalTransport == nil {
+		t.Fatal("expected shared local transport")
+	}
+	CloseIdleConnections()
+}
+
+func TestLocalTransportConcurrentCloseIsRaceFree(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = HTTPClient(NewLocalTarget(), time.Second).Transport
+		}()
+		go func() {
+			defer wg.Done()
+			CloseIdleConnections()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestSSHTargetConnectContextUnreachableReturnsPromptly(t *testing.T) {
+	originalDial := sshNetDialContext
+	sshNetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	t.Cleanup(func() { sshNetDialContext = originalDial })
+	identity, knownHosts := sshTestFiles(t)
+	target := NewSSHTarget("127.0.0.1", 1, "user", identity).WithKnownHosts(knownHosts)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := target.ConnectContext(ctx)
+	if err == nil {
+		t.Fatal("ConnectContext unexpectedly succeeded")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("ConnectContext took %s, want prompt failure", elapsed)
+	}
+}
+
+func TestSSHTargetConnectContextCancelDuringHandshake(t *testing.T) {
+	identity, knownHosts := sshTestFiles(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan struct{})
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			close(accepted)
+			defer conn.Close()
+			_, _ = io.Copy(io.Discard, conn)
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	target := NewSSHTarget("127.0.0.1", port, "user", identity).WithKnownHosts(knownHosts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- target.ConnectContext(ctx) }()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("test server did not accept TCP connection")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ConnectContext did not return after cancellation")
+	}
+}
+
+func sshTestFiles(t *testing.T) (string, string) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(identity, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(knownHosts, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = public
+	return identity, knownHosts
 }
 
 // TestDialContextFallback: the free DialContext helper falls back to a plain

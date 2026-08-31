@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // filesCmd is the parent for "trond files get" and "trond files put".
@@ -179,7 +180,7 @@ func runFilesGet(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(filepath.Dir(localDst), 0o755); err != nil {
 		return output.NewError("FILES_ERROR", output.ExitGeneralError, err.Error())
 	}
-	if err := os.WriteFile(localDst, data, 0o644); err != nil {
+	if err := target.WriteLocalFile(localDst, data, 0o600); err != nil {
 		return output.NewError("FILES_ERROR", output.ExitGeneralError, err.Error())
 	}
 

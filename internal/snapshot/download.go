@@ -242,13 +242,12 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 		}
 	}
 
-	// Local checks.
-	if err := os.MkdirAll(opts.DestDir, 0o755); err != nil {
-		return nil, fmt.Errorf("ensure dest dir: %w", err)
-	}
-	free, err := freeBytes(opts.DestDir)
+	// Local checks are read-only. A missing destination is checked against its
+	// nearest existing parent; dry-run must not create filesystem entries.
+	checkPath := existingParent(opts.DestDir)
+	free, err := freeBytes(checkPath)
 	if err != nil {
-		return nil, fmt.Errorf("statfs %s: %w", opts.DestDir, err)
+		return nil, fmt.Errorf("statfs %s: %w", checkPath, err)
 	}
 	r.FreeBytes = free
 
@@ -271,13 +270,12 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 }
 
 // Download streams the snapshot tarball, hashes it on the fly, and
-// extracts it directly to disk — no full .tgz is ever written. This
-// halves the disk-space requirement compared to download-then-extract
-// and shaves the extraction wall-time off the user-perceived runtime.
+// extracts it into a sibling staging directory inside the destination.
+// After all digest checks pass, the staged output is atomically published.
 //
 // Pipeline:
 //
-//	HTTP body → TeeReader(md5 + sha256) → progress wrapper → gzip → tar → fs
+//	HTTP body → TeeReader(md5 + sha256) → progress wrapper → gzip → tar → stage → atomic publish
 //
 // A note on what the digests buy. The upstream .md5sum sidecar comes down
 // the same connection as the tarball, so on a cleartext mirror it proves
@@ -285,17 +283,19 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 // ExpectedSHA256, obtained out of band, is the digest that can actually
 // detect substitution; the plaintext warning tells the operator so.
 //
-// On any error during streaming we abort cleanly: partially extracted
-// files stay where they are, the next run with --force will overwrite
-// them. We don't try to roll back, because rolling back a 50 GB
-// extraction would cost an extra 50 GB of seeks for what is fundamentally
-// a discardable cache.
+// On any error during streaming or verification, the live destination is
+// unchanged and the staging directory is removed. With --force, the old
+// snapshot is moved to a sibling backup while publishing; it is removed only
+// after the new snapshot is live, or after a successful restore.
 func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error) {
 	if opts.DestDir == "" {
 		return nil, errors.New("dest dir is required")
 	}
 	if opts.Backup == "" {
 		return nil, errors.New("backup is required")
+	}
+	if err := RefuseRunningNodeDestination(opts.DestDir, ""); err != nil {
+		return nil, err
 	}
 	// Validate the pin before the transfer, not after: a typo'd digest
 	// should not cost the operator a multi-hour download.
@@ -361,6 +361,15 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 		}
 	}
 
+	if err := os.MkdirAll(opts.DestDir, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure dest dir: %w", err)
+	}
+	stage, err := os.MkdirTemp(opts.DestDir, ".snapshot-stage-*")
+	if err != nil {
+		return nil, fmt.Errorf("create snapshot stage: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
+
 	start := time.Now()
 	url := pre.URL
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
@@ -395,7 +404,7 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 	}
 	defer gz.Close()
 
-	extracted, err := extractTar(gz, opts.DestDir, opts.Force)
+	extracted, err := extractTar(gz, stage, true)
 	if err != nil {
 		return nil, err
 	}
@@ -429,6 +438,9 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 		}
 		verified = true
 	}
+	if err := publishSnapshot(stage, opts.DestDir, opts.Force); err != nil {
+		return nil, err
+	}
 
 	dur := time.Since(start)
 	return &DownloadResult{
@@ -446,6 +458,45 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 		SHA256Verified:      sha256Verified,
 		PlaintextTransport:  pre.PlaintextTransport,
 	}, nil
+}
+
+var snapshotRename = os.Rename
+
+func publishSnapshot(stage, dest string, force bool) error {
+	source := filepath.Join(stage, snapshotRoot)
+	target := filepath.Join(dest, snapshotRoot)
+	if _, err := os.Stat(source); err != nil {
+		return fmt.Errorf("staged snapshot missing %s: %w", source, err)
+	}
+	backup := ""
+	if _, err := os.Lstat(target); err == nil {
+		if !force {
+			return &OverwriteError{Path: target, Message: fmt.Sprintf("existing database at %s; pass --force to overwrite", target)}
+		}
+		var backupErr error
+		backup, backupErr = os.MkdirTemp(dest, ".snapshot-backup-*")
+		if backupErr != nil {
+			return fmt.Errorf("create snapshot backup: %w", backupErr)
+		}
+		_ = os.RemoveAll(backup)
+		if err := snapshotRename(target, backup); err != nil {
+			return fmt.Errorf("stage existing snapshot: %w", err)
+		}
+	}
+	if err := snapshotRename(source, target); err != nil {
+		if backup != "" {
+			restoreErr := snapshotRename(backup, target)
+			if restoreErr != nil {
+				return fmt.Errorf("publish snapshot: %w; restore snapshot: %v; backup retained at %s", err, restoreErr, backup)
+			}
+			_ = os.RemoveAll(backup)
+		}
+		return fmt.Errorf("publish snapshot: %w", err)
+	}
+	if backup != "" {
+		_ = os.RemoveAll(backup)
+	}
+	return nil
 }
 
 // extractTar walks an already-gunzipped tar stream and writes entries
@@ -710,6 +761,19 @@ func isNonEmptyDir(p string) bool {
 		return false
 	}
 	return len(entries) > 0
+}
+
+func existingParent(path string) string {
+	path = filepath.Clean(path)
+	for current := path; ; current = filepath.Dir(current) {
+		if info, err := os.Stat(current); err == nil && info.IsDir() {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "."
+		}
+	}
 }
 
 func freeBytes(path string) (uint64, error) {

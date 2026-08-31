@@ -63,7 +63,7 @@ func newConnectedPair(t *testing.T) (*mcp.ClientSession, func()) {
 // markdown body, for knowledge_get). Non-text content fails the test.
 func extractText(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()
-	if len(res.Content) == 0 {
+	if res == nil || len(res.Content) == 0 {
 		t.Fatal("no content in tool result")
 	}
 	tc, ok := res.Content[0].(*mcp.TextContent)

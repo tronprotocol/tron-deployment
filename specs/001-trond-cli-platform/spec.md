@@ -11,7 +11,7 @@
 
 - Q: How should trond-managed nodes be uniquely identified? → A: User-assigned `name` field in intent.yaml, required and unique per state file.
 - Q: What is the relationship between `deploy` and `apply` commands? → A: `deploy` is an alias for `apply`; both are idempotent. `apply` is the canonical command.
-- Q: How should trond handle a previously interrupted (partial) deployment? → A: No transaction log; each `apply` step is individually idempotent (check-then-act). Partial state is naturally converged on next run.
+- Q: How should trond handle a previously interrupted (partial) deployment? → A: `apply` steps are individually idempotent (check-then-act). This recovery promise applies to `apply` only; `upgrade` and `rollback` use their artifact transaction and do not promise automatic no-human recovery.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -139,12 +139,12 @@ downtime and the ability to roll back if the upgrade fails.
 with rollback capability is important for production but can follow after core deploy/status
 functionality is stable.
 
-**Independent Test**: Can be tested by deploying a node at version X, then running `trond upgrade <node> --version Y`. The node restarts with the new version and passes health checks.
+**Independent Test**: Can be tested by deploying a node at version X, then running `trond upgrade <node> --version Y`. The node restarts with the new version; health verification is separate or supplied by the `upgrade-with-verify` recipe.
 
 **Acceptance Scenarios**:
 
-1. **Given** a fullnode running version 4.8.0, **When** the user runs `trond upgrade <node> --version 4.8.1`, **Then** trond downloads the new jar/image, stops the node, replaces the binary/image, restarts, and verifies health.
-2. **Given** an upgrade that fails health verification, **When** 5 minutes pass without the node reaching a healthy state, **Then** trond automatically rolls back to the previous version and reports the failure with diagnostics.
+1. **Given** a fullnode running version 4.8.0, **When** the user runs `trond upgrade <node> --version 4.8.1`, **Then** trond downloads the new jar/image, stops the node, replaces the binary/image, and restarts. Bare `trond upgrade` does not verify health.
+2. **Given** an upgrade that must be health-gated, **When** the `upgrade-with-verify` recipe (or a network upgrade) fails verification, **Then** that workflow rolls back and reports diagnostics.
 3. **Given** a successful upgrade, **When** the user later runs `trond rollback <node>`, **Then** the previous version is restored.
 
 ---
@@ -178,7 +178,7 @@ depends on all lower-level stories working correctly first.
 - What happens when disk space is insufficient for a fullnode? `trond preflight` MUST detect this and warn before deployment begins.
 - What happens when two users run `trond apply` simultaneously on the same target? The locking mechanism MUST ensure only one proceeds; the other receives a lock-conflict error.
 - What happens when the user's intent.yaml references a witness private key env var that contains a malformed key? trond MUST validate key format before deployment and report a clear error without echoing the key value.
-- What happens when trond is interrupted mid-deployment (kill signal, network drop, machine reboot)? The target may have partial artifacts (jar downloaded but systemd unit not yet created). On the next `trond apply`, each step MUST check-then-act: verify whether its artifact exists and is correct before re-executing. No manual cleanup or separate recovery command is required.
+- What happens when trond is interrupted mid-deployment? For `trond apply`, each step MUST check-then-act and converge without manual cleanup. This guarantee does not extend to bare `upgrade` or `rollback`.
 - What happens when two intent files define the same node `name`? trond MUST reject the second `apply` with a conflict error referencing the existing node's intent source.
 
 ## Requirements *(mandatory)*
@@ -201,7 +201,7 @@ depends on all lower-level stories working correctly first.
 - **FR-009**: For jar runtime, trond MUST download the java-tron jar from official GitHub Releases with SHA256 verification.
 - **FR-010**: For jar runtime, trond MUST generate systemd unit files and manage the node via `systemctl`.
 - **FR-011**: trond MUST support `apply`, `start`, `stop`, `restart`, and `remove` lifecycle commands for individual nodes. `deploy` is an alias for `apply` and behaves identically.
-- **FR-012**: `apply` is the canonical deployment command and MUST be idempotent: create if not exists, update if changed, no-op if identical. Each step within `apply` (download, render, transfer, start) MUST independently verify its precondition before executing, so that a partially completed prior run converges to the desired state on the next invocation without manual cleanup.
+- **FR-012**: `apply` is the canonical deployment command and MUST be idempotent: create if not exists, update if changed, no-op if identical. Each apply step MUST independently verify its precondition. This check-then-act/no-manual-recovery promise is specific to `apply`, not bare `upgrade` or `rollback`.
 - **FR-013**: trond MUST support `plan` to preview changes without applying them.
 - **FR-014**: Destructive operations (`remove --purge`, `rollback`) MUST default to dry-run and require explicit `--auto-approve` or `--confirm <node-name>`.
 
@@ -220,8 +220,27 @@ depends on all lower-level stories working correctly first.
 
 **Upgrade & Rollback**:
 
-- **FR-022**: trond MUST support `upgrade` to update a node to a new java-tron version.
+- **FR-022**: trond MUST support `upgrade` to update a node to a new java-tron version. Bare upgrade does not verify health; health-gated upgrade is provided by the `upgrade-with-verify` recipe and `network upgrade`.
 - **FR-023**: trond MUST support `rollback` to revert to the previous version.
+
+## Implementation Contracts
+
+- Intent hash and seven-port restoration are single-sourced in
+  `internal/apply/hash.go:14-74`; CLI apply/plan and MCP plan/apply use its
+  effective, legacy-match, and auto-port functions.
+- `internal/state/store.go:64-113` uses a `0600` temp file, file sync, atomic
+  rename, and directory sync; save failures are `STATE_ERROR`, and state.lock
+  protects read-modify-write from lost updates.
+- `internal/runtime/runtime.go:97-107` defines prepare/activate/start/rollback/
+  cleanup artifact transactions. Version state commits only after activation
+  and start succeed; jar disk, pin, and recorded version must converge.
+- `internal/target/target.go:26-107` owns pooled transports and timeout
+  dialing. StreamExec covers cancellation, explicit close, and natural EOF.
+- `cmd/resolve.go:127-146` gives write commands exclusive locking with a
+  30-second `LOCK_TIMEOUT`; read-only commands do not take that write lock.
+- `internal/render/hocon.go:145-172` parse-first redaction protects plan/config
+  diffs, verify-config, MCP resources, and MCP drift output; internal drift
+  comparison retains original bytes.
 
 **Preflight & Bootstrap**:
 

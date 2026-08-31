@@ -34,7 +34,7 @@
     },
     "intent_hash": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^(v2:)?[0-9a-f]{64}$"
     },
     "result": {
       "type": "string",

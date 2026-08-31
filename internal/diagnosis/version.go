@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
@@ -17,11 +18,7 @@ func (c *VersionChecker) Name() string { return "version_check" }
 
 func (c *VersionChecker) Run(ctx context.Context, tgt target.Target, opts CheckOpts) CheckResult {
 	// Get node version from API
-	if opts.HTTPPort == 0 {
-		opts.HTTPPort = 8090
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/wallet/getnodeinfo", opts.HTTPPort)
+	url := apply.ProbeURL(opts.HTTPPort, "/wallet/getnodeinfo")
 	out, err := target.Get(ctx, tgt, url, 5*time.Second)
 	if err != nil {
 		return CheckResult{

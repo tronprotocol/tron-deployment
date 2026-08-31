@@ -18,14 +18,23 @@ func TestParseMemoryGB(t *testing.T) {
 		{"64g", 64},
 		{"4096MB", 4},
 		{"2048M", 2},
-		{"", 0},
-		{"garbage", 0},
-		{"-4GB", 0},
+		{"2048m", 2},
+		{"2.5GB", 3},
+		{"1537MB", 2},
 		{" 16 GB ", 16},
 	}
 	for _, c := range cases {
-		if got := ParseMemoryGB(c.in); got != c.want {
+		got, err := ParseMemoryGB(c.in)
+		if err != nil || got != c.want {
 			t.Errorf("ParseMemoryGB(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseMemoryGBRejectsInvalidInput(t *testing.T) {
+	for _, in := range []string{"", "garbage", "-4GB", "0", "0GB", "1TB", "2.5"} {
+		if got, err := ParseMemoryGB(in); err == nil || got != 0 {
+			t.Errorf("ParseMemoryGB(%q) = (%d, %v), want error", in, got, err)
 		}
 	}
 }
@@ -85,7 +94,10 @@ func TestJVMArgs_HeapMaxOverrideRemainsVerbatim(t *testing.T) {
 }
 
 func TestJVMArgs_MBMemoryInput(t *testing.T) {
-	memGB := ParseMemoryGB("2048m")
+	memGB, err := ParseMemoryGB("2048m")
+	if err != nil {
+		t.Fatalf("ParseMemoryGB: %v", err)
+	}
 	got := JVMArgsString(memGB, 17, nil)
 	if !strings.Contains(got, "-Xmx1024m") || !strings.Contains(got, "-Xms1024m") {
 		t.Errorf("2048m input produced unsafe heap: %q", got)

@@ -16,6 +16,9 @@ var (
 	removeConfirm  string
 )
 
+// saveRemoveState is a test injection seam; production default persists the current store state.
+var saveRemoveState = func(nc *nodeContext) error { return nc.Store.Save(nc.State) }
+
 var removeCmd = &cobra.Command{
 	Use:   "remove <node>",
 	Short: "Remove a deployed node",
@@ -78,7 +81,9 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	nc.Store.RemoveNode(nc.State, name)
-	nc.Store.Save(nc.State)
+	if err := persistNodeState("remove", name, nc, start, saveRemoveState); err != nil {
+		return err
+	}
 	writeAudit(auditEvent{Command: "remove", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
 	writeResult(map[string]any{

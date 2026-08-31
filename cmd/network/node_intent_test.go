@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
+	"github.com/tronprotocol/tron-deployment/internal/state"
 )
 
 func twoNodeIntent() *intent.Intent {
@@ -157,5 +158,71 @@ func TestNodeIntent_OutOfRange(t *testing.T) {
 		if _, _, _, err := nodeIntent(parsed, i); err == nil {
 			t.Errorf("index %d: want an error, got nil", i)
 		}
+	}
+}
+
+func TestRestoreAutoPortsPreservesPersistedAssignments(t *testing.T) {
+	parsed := twoNodeIntent()
+	parsed.Target.AutoPorts = true
+	parsed.Nodes[0].Ports = intent.PortMapping{}
+	deployState := &state.DeploymentState{Nodes: []state.ManagedNode{{
+		Name:     "twosr-node0",
+		HTTPPort: 18090, GRPCPort: 18051, P2PPort: 18880,
+		MetricsPort: 19527, SolidityHTTPPort: 18092, SolidityGRPCPort: 18091,
+		JSONRPCPort: 18545,
+	}}}
+	store := &state.Store{}
+
+	raw := twoNodeIntent()
+	raw.Nodes[0].Ports = intent.PortMapping{}
+	restoreAutoPorts(parsed, 0, raw, deployState, store)
+	got := parsed.Nodes[0].Ports
+	if got.HTTP != 18090 || got.GRPC != 18051 || got.P2P != 18880 || got.Metrics != 19527 ||
+		got.SolidityHTTP != 18092 || got.SolidityGRPC != 18091 || got.JSONRPC != 18545 {
+		t.Fatalf("restored ports = %+v", got)
+	}
+}
+
+func TestRestoreAutoPortsMakesPeerWiringStable(t *testing.T) {
+	parsed := twoNodeIntent()
+	parsed.Target.AutoPorts = true
+	parsed.Nodes[0].Ports = intent.PortMapping{}
+	parsed.Nodes[1].Ports = intent.PortMapping{}
+	deployState := &state.DeploymentState{Nodes: []state.ManagedNode{
+		{Name: "twosr-node0", P2PPort: 18880},
+		{Name: "twosr-node1", P2PPort: 18881},
+	}}
+	store := &state.Store{}
+	raw := twoNodeIntent()
+	for i := range raw.Nodes {
+		raw.Nodes[i].Ports = intent.PortMapping{}
+	}
+	for i := range parsed.Nodes {
+		restoreAutoPorts(parsed, i, raw, deployState, store)
+	}
+	autoWireActivePeers(parsed)
+	if got := *parsed.Nodes[0].NetworkOverrides.ActivePeers; len(got) != 1 || got[0] != "twosr-node1:18881" {
+		t.Fatalf("node 0 active peers = %v", got)
+	}
+	if got := *parsed.Nodes[1].NetworkOverrides.ActivePeers; len(got) != 1 || got[0] != "twosr-node0:18880" {
+		t.Fatalf("node 1 active peers = %v", got)
+	}
+}
+
+func TestRestoreAutoPortsExplicitPortsWin(t *testing.T) {
+	parsed := twoNodeIntent()
+	parsed.Target.AutoPorts = true
+	parsed.Nodes[0].Ports = intent.PortMapping{HTTP: 19090, GRPC: 50051, P2P: 19999}
+	raw := twoNodeIntent()
+	raw.Nodes[0].Ports = intent.PortMapping{HTTP: 19090, P2P: 19999}
+	deployState := &state.DeploymentState{Nodes: []state.ManagedNode{{
+		Name: "twosr-node0", HTTPPort: 18090, P2PPort: 18880, GRPCPort: 18051,
+	}}}
+	restoreAutoPorts(parsed, 0, raw, deployState, &state.Store{})
+	if parsed.Nodes[0].Ports.HTTP != 19090 || parsed.Nodes[0].Ports.P2P != 19999 {
+		t.Fatalf("explicit ports were overwritten: %+v", parsed.Nodes[0].Ports)
+	}
+	if parsed.Nodes[0].Ports.GRPC != 18051 {
+		t.Fatalf("unset port was not restored: %+v", parsed.Nodes[0].Ports)
 	}
 }

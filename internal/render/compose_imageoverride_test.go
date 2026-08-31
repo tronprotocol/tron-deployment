@@ -65,3 +65,13 @@ func TestRenderCompose_NoOverrideKeepsLegacyBehavior(t *testing.T) {
 		t.Error("compose without imageOverride MUST NOT inject pull_policy")
 	}
 }
+
+func TestRenderComposeEscapesExtraEnvDollar(t *testing.T) {
+	i := &intent.Intent{Name: "env-node", Nodes: []intent.NodeSpec{{Type: "fullnode", ExtraEnv: map[string]string{"A": "$VAR", "B": "${VALUE}", "C": "literal$"}}}}
+	got := RenderCompose("env-node", i, &i.Nodes[0], "", "", "")
+	for _, want := range []string{"A=$$VAR", "B=$${VALUE}", "C=literal$$"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing escaped env %q in %s", want, got)
+		}
+	}
+}

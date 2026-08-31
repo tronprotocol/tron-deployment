@@ -3,6 +3,7 @@ package recipe
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -239,6 +240,22 @@ func TestRun_DryRunSkipsExec(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "would run") {
 		t.Errorf("dry-run output should contain 'would run', got: %s", out.String())
+	}
+}
+
+func TestRun_StartFailureDoesNotPanicOnNilProcessState(t *testing.T) {
+	r := Recipe{Name: "start-failure", Steps: []Step{{ID: "first", Command: "anything"}}}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("run panicked: %v", recovered)
+		}
+	}()
+	res, err := Run(context.Background(), r, RunOptions{Binary: "/path/does/not/exist", Out: io.Discard, Err: io.Discard})
+	if err == nil {
+		t.Fatal("expected start error")
+	}
+	if len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
+		t.Fatalf("result=%+v", res)
 	}
 }
 

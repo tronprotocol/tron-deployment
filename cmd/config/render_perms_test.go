@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestWriteRenderedFilesUsesIndependentNodeDirectories(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeRenderedFiles(filepath.Join(dir, "node0"), "net-node0", "a", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRenderedFiles(filepath.Join(dir, "node1"), "net-node1", "b", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, "node0", "net-node0.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(filepath.Join(dir, "node1", "net-node1.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != "a" || string(second) != "b" {
+		t.Fatalf("rendered files clobbered: %q %q", first, second)
+	}
+}
+
 // The rendered HOCON carries the witness signing key inlined by
 // render.RenderHOCON, so `config render --output-dir` must never leave it
 // group/world readable. These tests pin the modes of every artifact

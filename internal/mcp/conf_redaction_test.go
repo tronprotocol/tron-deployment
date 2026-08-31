@@ -3,6 +3,8 @@ package mcp
 import (
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
 // trond://nodes/{name}/conf hands the whole conf to an MCP client and
@@ -17,7 +19,7 @@ func TestRedactConfTextRemovesWitnessKey(t *testing.T) {
 		"comment carries a bracket": "localwitness = [ # ] here\n  " + key + "\n]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := redactConfText(conf); strings.Contains(got, key) {
+			if got := strings.Join(render.RedactWitnessLines(strings.Split(conf, "\n")), "\n"); strings.Contains(got, key) {
 				t.Errorf("witness key survived redaction:\n%s", got)
 			}
 		})
@@ -28,13 +30,13 @@ func TestRedactConfTextRemovesWitnessKey(t *testing.T) {
 // agent reads a node's real configuration.
 func TestRedactConfTextLeavesOrdinaryConfAlone(t *testing.T) {
 	conf := "storage = {\n  db.engine = \"LEVELDB\"\n}\nnode.p2p.version = 11111\n"
-	if got := redactConfText(conf); got != conf {
+	if got := strings.Join(render.RedactWitnessLines(strings.Split(conf, "\n")), "\n"); got != conf {
 		t.Errorf("conf without a witness key was rewritten:\ngot  %q\nwant %q", got, conf)
 	}
 }
 
 func TestRedactConfTextEmpty(t *testing.T) {
-	if got := redactConfText(""); got != "" {
+	if got := strings.Join(render.RedactWitnessLines(strings.Split("", "\n")), "\n"); got != "" {
 		t.Errorf("empty conf became %q", got)
 	}
 }

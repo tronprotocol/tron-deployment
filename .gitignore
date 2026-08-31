@@ -52,3 +52,6 @@ shadow-fork-intent.yaml
 # one cleartext secp256k1 private key per receiver and MUST never be
 # committed.
 txgen-output/
+
+# Regression campaign evidence (local-only, durable copy of /tmp/regress-*)
+.regression-evidence/

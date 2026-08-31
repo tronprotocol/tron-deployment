@@ -61,15 +61,10 @@ func registerInspectionTools(s *mcp.Server) {
 }
 
 func listNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
-	store, err := state.NewStore(paths.State())
+	_, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
-	st, err := store.Load()
-	if err != nil {
-		return errResult(err)
-	}
-
 	// Reshape into the same JSON we'd emit from `trond list -o json`.
 	// Schema: schemas/output/list.schema.json — a flat array, not a
 	// {nodes: [...]} object. Matching the CLI shape lets MCP-aware
@@ -97,11 +92,7 @@ func listNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.C
 }
 
 func statusForNode(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*mcp.CallToolResult, any, error) {
-	store, err := state.NewStore(paths.State())
-	if err != nil {
-		return errResult(err)
-	}
-	st, err := store.Load()
+	store, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
@@ -137,7 +128,7 @@ func statusForNode(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*
 	// piggybacked on the running-node resolution. Errors are dropped.
 	needLocalDockerID := node.Runtime == "docker" && node.Target.Type == "local"
 	if node.Status == "running" || needLocalDockerID {
-		if tgt, err := mcpResolveTargetFromNode(node); err == nil {
+		if tgt, err := target.FromManagedNode(node); err == nil {
 			if c, ok := any(tgt).(interface{ Close() error }); ok {
 				defer c.Close()
 			}
@@ -158,27 +149,8 @@ func statusForNode(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*
 	return jsonResult(out)
 }
 
-// mcpResolveTargetFromNode mirrors cmd/resolve.go::resolveTargetFromNode.
-// Duplicated so internal/mcp doesn't import cmd/.
-func mcpResolveTargetFromNode(node *state.ManagedNode) (target.Target, error) {
-	switch node.Target.Type {
-	case "ssh":
-		t := target.NewSSHTarget(node.Target.Host, node.Target.Port, node.Target.User, node.Target.IdentityFile)
-		if err := t.Connect(); err != nil {
-			return nil, err
-		}
-		return t, nil
-	default:
-		return target.NewLocalTarget(), nil
-	}
-}
-
 func inspectAllNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
-	store, err := state.NewStore(paths.State())
-	if err != nil {
-		return errResult(err)
-	}
-	st, err := store.Load()
+	_, st, err := state.Load(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
@@ -205,10 +177,10 @@ func inspectAllNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (
 		// extraction.
 		eps := map[string]string{}
 		if n.HTTPPort != 0 {
-			eps["http"] = httpURL(target.EndpointHost(n.Target.Type, n.Target.Host), n.HTTPPort)
+			eps["http"] = apply.HTTPURL(target.EndpointHost(n.Target.Type, n.Target.Host), n.HTTPPort)
 		}
 		if n.GRPCPort != 0 {
-			eps["grpc"] = grpcAddr(target.EndpointHost(n.Target.Type, n.Target.Host), n.GRPCPort)
+			eps["grpc"] = apply.GRPCAddr(target.EndpointHost(n.Target.Type, n.Target.Host), n.GRPCPort)
 		}
 		if len(eps) > 0 {
 			row["endpoints"] = eps

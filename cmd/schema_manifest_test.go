@@ -1,5 +1,6 @@
-//go:build e2e
-
+// NOTE: no //go:build e2e tag — this file runs in the DEFAULT test suite
+// (moved out of the e2e tag in 3d8943b). See agentsmd_test.go for the
+// rationale and hermeticity constraints for new tests here.
 package cmd
 
 import (

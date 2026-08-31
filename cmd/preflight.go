@@ -182,7 +182,12 @@ func checkMemory(cmd *cobra.Command, tgt target.Target, parsed *intent.Intent) c
 	// so the threshold stayed at the hardcoded 16 GB regardless of intent.
 	minGB := uint64(0)
 	for _, node := range parsed.Nodes {
-		if g := uint64(render.ParseMemoryGB(node.Resources.Memory)); g > minGB {
+		g, err := render.ParseMemoryGB(node.Resources.Memory)
+		if err != nil {
+			return checkResult{Name: "memory", Status: "fail",
+				Message: fmt.Sprintf("node memory %q is invalid: %v", node.Resources.Memory, err)}
+		}
+		if g := uint64(g); g > minGB {
 			minGB = g
 		}
 	}
@@ -203,8 +208,13 @@ func checkMemory(cmd *cobra.Command, tgt target.Target, parsed *intent.Intent) c
 func checkMemoryRecommended(parsed *intent.Intent) []checkResult {
 	var checks []checkResult
 	for i, node := range parsed.Nodes {
-		memoryGB := render.ParseMemoryGB(node.Resources.Memory)
-		if memoryGB <= 0 || memoryGB >= 8 {
+		memoryGB, err := render.ParseMemoryGB(node.Resources.Memory)
+		if err != nil {
+			checks = append(checks, checkResult{Name: "memory-recommended", Status: "fail",
+				Message: fmt.Sprintf("node memory %q is invalid: %v", node.Resources.Memory, err)})
+			continue
+		}
+		if memoryGB >= 8 {
 			continue
 		}
 		nodeName := parsed.Name

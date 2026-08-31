@@ -8,27 +8,28 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
-// WaitForReady polls the node's HTTP API via `docker exec` until it
+// WaitForReady polls the node's HTTP API until it
 // responds 2xx or the timeout elapses. Used by Apply when Wait=true
 // and exposed publicly so callers (verify command, MCP tool, recipe
 // step) can reuse the same probe shape without duplicating the curl
 // invocation.
 //
-// The probe runs `docker exec <name> curl ...` so it sees the
-// container's network — important when host-port mapping is delayed
-// on first start.
-func WaitForReady(ctx context.Context, tgt target.Target, name string, httpPort int, timeout time.Duration) error {
+// Docker probes run inside the container so they see its network. Jar probes
+// use target.Get, which tunnels to the target's loopback for remote targets.
+func WaitForReady(ctx context.Context, tgt target.Target, name, runtimeName string, httpPort int, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if httpPort == 0 {
-		httpPort = 8090
-	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/wallet/getnowblock", httpPort)
+	url := ProbeURL(httpPort, "/wallet/getnowblock")
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	var lastErr error
 	for {
-		_, err := tgt.Exec(ctx, "docker", "exec", name, "curl", "-fsS", "--max-time", "5", url)
+		var err error
+		if runtimeName == "jar" {
+			_, err = target.Get(ctx, tgt, url, 5*time.Second)
+		} else {
+			_, err = tgt.Exec(ctx, "docker", "exec", name, "curl", "-fsS", "--max-time", "5", url)
+		}
 		if err == nil {
 			return nil
 		}

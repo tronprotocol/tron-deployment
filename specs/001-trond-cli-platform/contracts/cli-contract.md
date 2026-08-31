@@ -44,6 +44,15 @@ All errors emitted to stderr as JSON (when `--output json`):
 }
 ```
 
+## Implementation Contracts
+
+- `internal/apply/hash.go:14-74` is the sole intent-hash source: `EffectiveIntentHash` uses the `intent-hash-v2\x00` domain separator and `v2:` prefix; `LegacyIntentHashMatches` checks raw/canonical forms plus recorded monitoring equivalence; `RestoreAutoPorts` restores seven non-zero persisted ports. CLI apply/plan and MCP plan/apply all call these functions; duplicate implementations are forbidden.
+- `internal/state/store.go:64-113` saves through a `0600` temp file, file sync, atomic rename, and directory sync. Save failures propagate as `STATE_ERROR`; the state lock protects read-modify-write from lost updates.
+- `internal/runtime/runtime.go:97-107` defines the artifact transaction (`PrepareArtifact`, `Activate`, `Start`, `Rollback`, `Cleanup`). Version state is committed only after activation and startup succeed; jar recovery maintains disk == pin == recorded version.
+- `internal/target/target.go:26-107` owns pooled HTTP transports and timeout-enforced dialing. `StreamExec` supports cancellation, explicit close, and natural EOF with merged output and propagated exit errors.
+- `cmd/resolve.go:127-146` separates exclusive write resolution (30-second `LOCK_TIMEOUT`) from read-only access. Write commands include apply, start, stop, restart, remove, heal, upgrade, rollback, plus network mutators.
+- `internal/render/hocon.go:145-172` provides parse-first `RedactWitnessLines`; plan/config diffs, verify-config, MCP resources, and MCP drift output are redacted, while internal drift comparison uses original bytes.
+
 ## Command Reference
 
 ### trond apply

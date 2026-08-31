@@ -9,7 +9,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -147,8 +149,8 @@ func readNodeEndpointsResource(_ context.Context, req *mcp.ReadResourceRequest) 
 		"runtime": node.Runtime,
 		"target":  node.Target,
 		"endpoints": map[string]string{
-			"http": fmt.Sprintf("http://%s:%d", host, node.HTTPPort),
-			"grpc": fmt.Sprintf("%s:%d", host, node.GRPCPort),
+			"http": apply.HTTPURL(host, node.HTTPPort),
+			"grpc": apply.GRPCAddr(host, node.GRPCPort),
 		},
 		"version": node.Version,
 		"labels":  node.Labels,
@@ -175,7 +177,7 @@ func readNodeConfResource(ctx context.Context, req *mcp.ReadResourceRequest) (*m
 	if err != nil {
 		return nil, err
 	}
-	tgt, err := mcpResolveTargetFromNode(node)
+	tgt, err := target.FromManagedNode(node)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +199,7 @@ func readNodeConfResource(ctx context.Context, req *mcp.ReadResourceRequest) (*m
 		Contents: []*mcp.ResourceContents{{
 			URI:      req.Params.URI,
 			MIMEType: "text/plain",
-			Text:     redactConfText(live),
+			Text:     strings.Join(render.RedactWitnessLines(strings.Split(live, "\n")), "\n"),
 		}},
 	}, nil
 }

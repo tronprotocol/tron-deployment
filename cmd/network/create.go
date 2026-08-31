@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -26,6 +25,23 @@ var (
 	createIntentPath string
 	createMonitor    bool
 )
+
+var createApply = apply.Apply
+
+// createTarget is a test injection seam; production default resolves the target.
+var createTarget = func(parsed *intent.Intent) (target.Target, error) {
+	switch parsed.Target.Type {
+	case "ssh":
+		t := target.NewSSHTarget(parsed.Target.Host, parsed.Target.Port, parsed.Target.User, parsed.Target.IdentityFile)
+		if err := t.Connect(); err != nil {
+			return nil, err
+		}
+		return t, nil
+	default:
+		return target.NewLocalTarget(), nil
+	}
+}
+var createMonitoring = deployNetworkMonitoring
 
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -51,6 +67,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
+	rawParsed, err := intent.LoadRaw(createIntentPath)
+	if err != nil {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
+	}
+	if len(parsed.Nodes) != len(rawParsed.Nodes) {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, "raw and effective intent node counts differ")
+	}
 
 	// --require-private: same machine-enforced safety gate as `apply`,
 	// applied to the multi-node path. Refuse a non-private network before
@@ -68,21 +91,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		intent.ApplyMonitoringDefaults(parsed.Monitoring)
 	}
 
-	// Resolve target
-	var tgt target.Target
-	switch parsed.Target.Type {
-	case "ssh":
-		t := target.NewSSHTarget(parsed.Target.Host, parsed.Target.Port, parsed.Target.User, parsed.Target.IdentityFile)
-		if err := t.Connect(); err != nil {
-			return output.NewError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
-		}
-		defer t.Close()
-		tgt = t
-	default:
-		tgt = target.NewLocalTarget()
+	// Resolve target.
+	tgt, err := createTarget(parsed)
+	if err != nil {
+		return output.NewError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
 	}
+	defer closeTarget(tgt)
 
-	templateDir := findTemplatesDir()
+	templateDir := apply.FindTemplatesDir()
 	workDir := paths.Deployments()
 
 	// Hold the state lock across the whole load-modify-save cycle: this
@@ -101,6 +117,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	deployState, err := store.Load()
 	if err != nil {
 		return output.NewError("STATE_ERROR", output.ExitGeneralError, err.Error())
+	}
+
+	// Restore persisted auto ports before auto-wiring peers. The peer
+	// addresses must use the same P2P ports that the existing nodes use.
+	for i := range parsed.Nodes {
+		restoreAutoPorts(parsed, i, rawParsed, deployState, store)
 	}
 
 	// Auto-wire peering between siblings before rendering. After
@@ -151,7 +173,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 		}
-		res, err := apply.Apply(cmd.Context(), apply.Options{
+		res, err := createApply(cmd.Context(), apply.Options{
 			Intent:         sub,
 			Target:         tgt,
 			Store:          store,
@@ -199,6 +221,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		"network": parsed.Name,
 		"nodes":   deployed,
 	}
+	failed := countFailedDeployments(deployed)
+	if failed > 0 {
+		result["status"] = "failed"
+		output.WriteJSON(os.Stdout, result)
+		return output.NewError("DEPLOY_ERROR", output.ExitGeneralError,
+			fmt.Sprintf("%d node(s) failed to deploy", failed))
+	}
+	result["status"] = "success"
 
 	// Deploy monitoring stack only when --monitor flag is explicitly passed.
 	if createMonitor {
@@ -208,7 +238,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		parsed.Monitoring.Enabled = intent.BoolPtr(true)
 		intent.ApplyMonitoringDefaults(parsed.Monitoring)
 
-		monResult := deployNetworkMonitoring(cmd.Context(), tgt, workDir, parsed)
+		monResult := createMonitoring(cmd.Context(), tgt, workDir, parsed)
 		if monResult.error != "" {
 			result["monitoring_error"] = monResult.error
 		} else {
@@ -230,6 +260,32 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	output.WriteJSON(os.Stdout, result)
 	return nil
+}
+
+// restoreAutoPorts reuses ports recorded for a node before projecting the
+// network intent. This keeps a repeated network create from allocating a new
+// set of host ports and needlessly redeploying every node.
+func restoreAutoPorts(parsed *intent.Intent, i int, rawParsed *intent.Intent, deployState *state.DeploymentState, store *state.Store) {
+	if !parsed.Target.AutoPorts || i < 0 || i >= len(parsed.Nodes) {
+		return
+	}
+	if rawParsed == nil || i >= len(rawParsed.Nodes) {
+		return
+	}
+	nodeName := fmt.Sprintf("%s-node%d", parsed.Name, i)
+	if existing := store.GetNode(deployState, nodeName); existing != nil {
+		apply.RestoreAutoPorts(&parsed.Nodes[i], existing, &rawParsed.Nodes[i])
+	}
+}
+
+func countFailedDeployments(nodes []map[string]any) int {
+	failed := 0
+	for _, node := range nodes {
+		if node["status"] == "error" {
+			failed++
+		}
+	}
+	return failed
 }
 
 // autoWireActivePeers fills each node's network_overrides.active_peers
@@ -269,21 +325,6 @@ func autoWireActivePeers(parsed *intent.Intent) {
 		}
 		parsed.Nodes[i].NetworkOverrides.ActivePeers = &others
 	}
-}
-
-func findTemplatesDir() string {
-	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
-		return d
-	}
-	candidates := []string{"templates", "./templates"}
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			if _, err := os.Stat(filepath.Join(c, "main_net_config.conf")); err == nil {
-				return c
-			}
-		}
-	}
-	return ""
 }
 
 // deployNetworkMonitoring deploys a single monitoring stack for an entire

@@ -16,6 +16,7 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/fsclone"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -32,11 +33,6 @@ import (
 //
 // Mutating (creates dst) so it is CLI-only — deliberately NOT an MCP tool,
 // keeping filesystem-mutating capability out of the read-only agent fleet.
-// containerDataDir is where compose mounts the chain DB inside a docker
-// node (mirrors internal/render/compose.go). --from-node finds the host
-// path by matching this mount Destination.
-const containerDataDir = "/java-tron/output-directory"
-
 var cloneFromNode string
 
 var cloneCmd = &cobra.Command{
@@ -389,7 +385,7 @@ func dockerNodeDBDir(ctx context.Context, name string) (string, error) {
 			WithSuggestions(fmt.Sprintf("Run: trond stop %s", name))
 	}
 	for _, m := range c.Mounts {
-		if m.Destination != containerDataDir {
+		if m.Destination != render.ContainerDataDir {
 			continue
 		}
 		// Reject by mount TYPE, not by sniffing Source: a Linux named volume
@@ -403,7 +399,7 @@ func dockerNodeDBDir(ctx context.Context, name string) (string, error) {
 		return m.Source, nil
 	}
 	return "", output.NewError("VALIDATION_ERROR", output.ExitValidationError,
-		fmt.Sprintf("node %q has no chain-DB mount at %s", name, containerDataDir))
+		fmt.Sprintf("node %q has no chain-DB mount at %s", name, render.ContainerDataDir))
 }
 
 // jarActive reports whether the node's systemd unit is currently active. A

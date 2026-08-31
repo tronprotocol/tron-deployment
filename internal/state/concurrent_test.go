@@ -1,6 +1,9 @@
 package state
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,9 +81,9 @@ func TestLock_AcquireWaitsForRelease(t *testing.T) {
 
 // TestStore_ConcurrentSavesDontDropData hammers Save from many
 // goroutines (each acquiring the lock) and verifies the final on-disk
-// state contains every node we wrote. State writes that race on the
-// underlying file (without flock or with a buggy atomic-rename) lose
-// data here.
+// state contains every node we wrote. Lost-update prevention belongs to the
+// caller's state.lock protocol; this test covers that protocol plus Save's
+// complete-file writes.
 func TestStore_ConcurrentSavesDontDropData(t *testing.T) {
 	dir := t.TempDir()
 	storePath := dir + "/state.json"
@@ -143,6 +146,52 @@ func TestStore_ConcurrentSavesDontDropData(t *testing.T) {
 				t.Errorf("missing node %s — Save lost data under contention", stableName(i, j))
 			}
 		}
+	}
+}
+
+func TestStore_ConcurrentSavesWithoutLockKeepCompleteJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/state.json"
+	const writers = 20
+
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			store, err := NewStore(path)
+			if err != nil {
+				t.Errorf("NewStore: %v", err)
+				return
+			}
+			if err := store.Save(&DeploymentState{Nodes: []ManagedNode{{Name: stableName(id, 0)}}}); err != nil {
+				t.Errorf("Save: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got DeploymentState
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("final state is corrupted: %v", err)
+	}
+	if len(got.Nodes) != 1 {
+		t.Fatalf("final state has %d nodes, want one complete candidate", len(got.Nodes))
+	}
+	for i := range writers {
+		if got.Nodes[0].Name == stableName(i, 0) {
+			goto candidateFound
+		}
+	}
+	t.Fatalf("final state %q is not one of the concurrent Save candidates", got.Nodes[0].Name)
+
+candidateFound:
+	if matches, err := filepath.Glob(filepath.Join(dir, ".state-*.tmp")); err != nil || len(matches) != 0 {
+		t.Fatalf("temporary state files remain: matches=%v err=%v", matches, err)
 	}
 }
 

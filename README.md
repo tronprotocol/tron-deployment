@@ -274,7 +274,7 @@ cache management, and MCP usage: [build pipeline quickstart](specs/002-trond-bui
 | `trond logs <node>` | Stream node logs |
 | `trond diagnose <node>` | Run structured health checks |
 | `trond health <node>` | Quick HTTP API probe |
-| `trond verify <node>` | Post-deploy health gate |
+| `trond verify --intent <path> --timeout 5m` | Post-deploy health gate |
 | `trond preflight` | Check target readiness |
 | `trond bootstrap` | Install Docker or JDK on target |
 

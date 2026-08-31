@@ -119,7 +119,18 @@ import (
 //	        `md5_verified: false` on a successful download means one
 //	        thing only: the operator passed `--no-verify` / `no_verify`.
 //	        One existing schema, one additive optional field — PATCH.
-const SchemaVersion = "1.16.0"
+//
+//	1.16.0 — status intent_hash accepts the versioned `v2:` + 64-hex
+//	        format while retaining the legacy bare 64-hex format; the
+//	        shadow-fork-keygen schema also arrived on this version via
+//	        develop (#220, one new schema). Additive widening + one new
+//	        schema — MINOR (both sides landed at 1.16.0 independently).
+//	1.16.1 — status output gains `monitoring` (prometheus_port +
+//	        grafana_port + live-probed status) and inspect node entries
+//	        gain `intent_hash`, matching what both commands already emit.
+//	        Existing schemas gain additive optional fields — PATCH (the
+//	        earlier additive bumps that took a MINOR were over-versioned).
+const SchemaVersion = "1.16.2"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so

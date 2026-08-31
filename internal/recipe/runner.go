@@ -311,7 +311,7 @@ func runStep(ctx context.Context, opts RunOptions, step Step, args []string) (St
 	full = append(full, args...)
 
 	if opts.DryRun {
-		fmt.Fprintf(opts.Out, "  [%s] would run: %s %s\n", step.ID, opts.Binary, strings.Join(full, " "))
+		fmt.Fprintf(opts.Out, "  [%s] would run: %s %s\n", displayStepID(step.ID), opts.Binary, strings.Join(full, " "))
 		return res, nil
 	}
 
@@ -323,7 +323,9 @@ func runStep(ctx context.Context, opts RunOptions, step Step, args []string) (St
 	cmd.Stderr = opts.Err
 	stdout, err := cmd.Output()
 	res.DurationMs = time.Since(start).Milliseconds()
-	res.ExitCode = cmd.ProcessState.ExitCode()
+	if cmd.ProcessState != nil {
+		res.ExitCode = cmd.ProcessState.ExitCode()
+	}
 	res.Output = captureOutput(stdout)
 
 	if err != nil {
@@ -331,6 +333,10 @@ func runStep(ctx context.Context, opts RunOptions, step Step, args []string) (St
 		return res, err
 	}
 	return res, nil
+}
+
+func displayStepID(id string) string {
+	return strings.ReplaceAll(id, "_", "-")
 }
 
 // runRollback executes every rollback step in order, logging but not
@@ -427,7 +433,7 @@ func runHostStep(ctx context.Context, opts RunOptions, step Step, args []string)
 	}
 
 	if opts.DryRun {
-		fmt.Fprintf(opts.Out, "  [%s] would run on host: %s\n", step.ID, strings.Join(argv, " "))
+		fmt.Fprintf(opts.Out, "  [%s] would run on host: %s\n", displayStepID(step.ID), strings.Join(argv, " "))
 		return res, nil
 	}
 	if opts.RequirePrivate {

@@ -15,7 +15,7 @@ import (
 // Example template forms supported:
 //
 //	{{ params.node_name }}
-//	{{ steps.stage-snapshot.job_id }}
+//	{{ steps.stage_snapshot.job_id }}
 //	{{ params.storage_root }}/output-directory
 //
 // We deliberately keep this thin — full Sprig-style helpers are

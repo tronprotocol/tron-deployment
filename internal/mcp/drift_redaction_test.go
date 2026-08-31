@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
 // F3 regression test for mcpLineDiff. Its output is returned as an MCP
@@ -38,7 +40,7 @@ func TestMCPLineDiff_RedactsWitnessKey(t *testing.T) {
 
 	t.Run("key-rotation", func(t *testing.T) {
 		desired := "a = 1\n" + `localwitness = ["` + mcpKeyB + `"]` + "\nz = 9\n"
-		diffs := mcpLineDiff(live, desired, 0)
+		diffs := render.DiffText(live, desired, 0)
 		assertNoMCPKeys(t, diffs)
 		if len(diffs) != 2 {
 			t.Errorf("a rotated witness key must still be reported as drift: %v", diffs)
@@ -52,7 +54,7 @@ func TestMCPLineDiff_RedactsWitnessKey(t *testing.T) {
 
 	t.Run("line-shift", func(t *testing.T) {
 		desired := "a = 1\nseed.node.ip.list = []\n" + `localwitness = ["` + mcpKeyA + `"]` + "\nz = 9\n"
-		diffs := mcpLineDiff(live, desired, 0)
+		diffs := render.DiffText(live, desired, 0)
 		assertNoMCPKeys(t, diffs)
 		if len(diffs) == 0 {
 			t.Error("a line shift must still be reported as drift")
@@ -61,7 +63,7 @@ func TestMCPLineDiff_RedactsWitnessKey(t *testing.T) {
 
 	t.Run("context-lines", func(t *testing.T) {
 		desired := "a = 1\n" + `localwitness = ["` + mcpKeyA + `"]` + "\nz = CHANGED\n"
-		diffs := mcpLineDiff(live, desired, 2)
+		diffs := render.DiffText(live, desired, 2)
 		assertNoMCPKeys(t, diffs)
 		if !strings.Contains(strings.Join(diffs, "\n"), `  localwitness = ["<REDACTED>"]`) {
 			t.Errorf("matching --context lines must be redacted too, got:\n%s", strings.Join(diffs, "\n"))
@@ -69,7 +71,7 @@ func TestMCPLineDiff_RedactsWitnessKey(t *testing.T) {
 	})
 
 	t.Run("identical-is-in-sync", func(t *testing.T) {
-		if diffs := mcpLineDiff(live, live, 0); len(diffs) != 0 {
+		if diffs := render.DiffText(live, live, 0); len(diffs) != 0 {
 			t.Errorf("identical configs must stay in_sync, got %v", diffs)
 		}
 	})

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -107,6 +108,134 @@ func TestExtractTar_StreamingHonoursForce(t *testing.T) {
 	}
 	if string(got) != "fresh" {
 		t.Fatalf("file not overwritten: %q", got)
+	}
+}
+
+func TestPreflightDoesNotCreateMissingDestination(t *testing.T) {
+	base := t.TempDir()
+	dest := filepath.Join(base, "missing", "destination")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "1")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	_, err := Preflight(context.Background(), DownloadOptions{
+		Source: Source{BaseURL: server.URL}, Backup: "b", Kind: DBKindLite, DestDir: dest,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created destination: stat err=%v", err)
+	}
+}
+
+func TestPublishSnapshotForceReplacesAndCleansBackup(t *testing.T) {
+	dest := t.TempDir()
+	stage := filepath.Join(dest, ".snapshot-stage-test")
+	old := filepath.Join(dest, snapshotRoot, "database", "CURRENT")
+	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newFile := filepath.Join(stage, snapshotRoot, "database", "CURRENT")
+	if err := os.MkdirAll(filepath.Dir(newFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishSnapshot(stage, dest, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(old)
+	if err != nil || string(got) != "new" {
+		t.Fatalf("published content = %q, err=%v", got, err)
+	}
+	if entries, err := filepath.Glob(filepath.Join(dest, ".snapshot-backup-*")); err != nil || len(entries) != 0 {
+		t.Fatalf("backup leaked: %v (err=%v)", entries, err)
+	}
+}
+
+func TestPublishSnapshotFailureRestoresOldSnapshot(t *testing.T) {
+	oldRename := snapshotRename
+	t.Cleanup(func() { snapshotRename = oldRename })
+	dest := t.TempDir()
+	stage := filepath.Join(dest, ".snapshot-stage-test")
+	old := filepath.Join(dest, snapshotRoot, "database", "CURRENT")
+	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(stage, snapshotRoot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var publish bool
+	snapshotRename = func(from, to string) error {
+		if strings.Contains(from, ".snapshot-stage-test") && !publish {
+			publish = true
+			return errors.New("injected publish failure")
+		}
+		return os.Rename(from, to)
+	}
+	err := publishSnapshot(stage, dest, true)
+	if err == nil || !strings.Contains(err.Error(), "publish snapshot") {
+		t.Fatalf("error = %v, want publish failure", err)
+	}
+	got, readErr := os.ReadFile(old)
+	if readErr != nil || string(got) != "old" {
+		t.Fatalf("restore content = %q, err=%v", got, readErr)
+	}
+	if entries, globErr := filepath.Glob(filepath.Join(dest, ".snapshot-backup-*")); globErr != nil || len(entries) != 0 {
+		t.Fatalf("backup leaked after successful restore: %v (err=%v)", entries, globErr)
+	}
+}
+
+func TestPublishSnapshotAndRestoreFailureRetainsBackup(t *testing.T) {
+	oldRename := snapshotRename
+	t.Cleanup(func() { snapshotRename = oldRename })
+	dest := t.TempDir()
+	stage := filepath.Join(dest, ".snapshot-stage-test")
+	old := filepath.Join(dest, snapshotRoot)
+	if err := os.MkdirAll(filepath.Join(old, "database"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "database", "CURRENT"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(stage, snapshotRoot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var publishAttempts int
+	snapshotRename = func(from, to string) error {
+		if strings.Contains(from, ".snapshot-stage-test") {
+			publishAttempts++
+			return errors.New("injected publish failure")
+		}
+		if strings.Contains(from, ".snapshot-backup-") {
+			return errors.New("injected restore failure")
+		}
+		return os.Rename(from, to)
+	}
+	err := publishSnapshot(stage, dest, true)
+	if err == nil || !strings.Contains(err.Error(), "restore snapshot") || !strings.Contains(err.Error(), "backup retained") {
+		t.Fatalf("error = %v, want publish and restore failures", err)
+	}
+	if publishAttempts != 1 {
+		t.Fatalf("publish attempts = %d, want one", publishAttempts)
+	}
+	entries, globErr := filepath.Glob(filepath.Join(dest, ".snapshot-backup-*"))
+	if globErr != nil || len(entries) != 1 {
+		t.Fatalf("backup not retained: %v (err=%v)", entries, globErr)
 	}
 }
 

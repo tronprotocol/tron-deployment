@@ -40,14 +40,10 @@ func TestMCPToolOutputsMatchCLISchemas(t *testing.T) {
 			args: json.RawMessage(`{"path":"../../examples/nile-fullnode.yaml"}`)},
 		{tool: "config_render", schemaName: "config-render",
 			args: json.RawMessage(`{"path":"../../examples/nile-fullnode.yaml"}`)},
-		// `plan` is intentionally NOT in this table. The MCP tool
-		// returns an intent-only structural preview (no state diff)
-		// because MCP-resident agents typically don't have the
-		// host's state.json. The CLI version walks state and emits a
-		// changes[] / destructive / downtime payload. Both are
-		// documented and the divergence is surfaced in the MCP
-		// tool's "note" field; treating them as the same schema
-		// would force one to mimic the other and lose information.
+		// plan now returns the same state-aware structural contract as the CLI;
+		// line-level HOCON diff remains CLI-only.
+		{tool: "plan", schemaName: "plan",
+			args: json.RawMessage(`{"path":"../../examples/nile-fullnode.yaml"}`)},
 	}
 
 	session, cleanup := newConnectedPair(t)

@@ -89,8 +89,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		"healthy": false,
 		"logs":    apply.LogsDescriptor(node),
 		"api_endpoints": map[string]any{
-			"http": fmt.Sprintf("http://%s:%d", target.EndpointHost(node.Target.Type, node.Target.Host), effectivePort(node.HTTPPort, 8090)),
-			"grpc": fmt.Sprintf("%s:%d", target.EndpointHost(node.Target.Type, node.Target.Host), effectivePort(node.GRPCPort, 50051)),
+			"http": apply.HTTPURL(target.EndpointHost(node.Target.Type, node.Target.Host), apply.PortOrDefault(node.HTTPPort, 8090)),
+			"grpc": apply.GRPCAddr(target.EndpointHost(node.Target.Type, node.Target.Host), apply.PortOrDefault(node.GRPCPort, 50051)),
 		},
 	}
 
@@ -186,13 +186,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func effectivePort(stored, fallback int) int {
-	if stored != 0 {
-		return stored
-	}
-	return fallback
 }
 
 // probeMonitoringStatus returns a short health status string for the

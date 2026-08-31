@@ -105,7 +105,10 @@ func chaosPair(ctx context.Context, op, a, b string) error {
 	if err != nil {
 		return err
 	}
-	deployState, _ := store.Load()
+	deployState, err := store.Load()
+	if err != nil {
+		return output.NewError("STATE_ERROR", output.ExitGeneralError, err.Error())
+	}
 	nodeA := store.GetNode(deployState, a)
 	nodeB := store.GetNode(deployState, b)
 	if nodeA == nil {

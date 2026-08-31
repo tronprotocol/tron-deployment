@@ -16,6 +16,9 @@ var stopCmd = &cobra.Command{
 	RunE:  runStop,
 }
 
+// saveStopState is a test injection seam; production default persists via nodeContext.SaveState.
+var saveStopState = func(nc *nodeContext) error { return nc.SaveState() }
+
 func init() {
 	rootCmd.AddCommand(stopCmd)
 }
@@ -41,7 +44,9 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 
 	nc.Node.Status = "stopped"
-	nc.SaveState()
+	if err := persistNodeState("stop", name, nc, start, saveStopState); err != nil {
+		return err
+	}
 	writeAudit(auditEvent{Command: "stop", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
 	writeResult(map[string]any{"name": name, "status": "stopped"})

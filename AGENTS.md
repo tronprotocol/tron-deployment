@@ -86,15 +86,21 @@ the exit status alone. One command emits a partial result today:
 `network destroy` exits **1** with `error_code: "PARTIAL_SUCCESS"`, a
 `removed` array and a `failed` array naming the nodes whose teardown failed.
 
-**Do not retry it.** The message says `state cleaned up regardless`: trond has
-already dropped every node from its state, so a second `network destroy`
-returns `NETWORK_NOT_FOUND`. The `failed` entries are containers or units
-still running on the target with nothing tracking them — surface that list to
-the user for manual cleanup rather than retrying.
+**Partial state semantics.** The `removed` entries are gone from trond's
+state; the `failed` entries REMAIN in state (their containers or units may
+still be running on the target). A follow-up `network destroy` retries
+exactly those remaining nodes — fix the underlying cause first (target
+unreachable, docker error), then re-run if the user approves. Surface the
+`failed` array to the user rather than looping silently.
 
-The other multi-node commands do not partially report: `network create` stops
-at the first failed node with `DEPLOY_ERROR`, and `network upgrade` with
-`UPGRADE_FAILED`, both exit 1.
+`network create` behaves differently: it attempts every node to the end —
+a failing node is recorded as an `error` entry in the result payload while
+its siblings still get their turn — and only then returns exit 1 with
+`DEPLOY_ERROR` summarising how many failed. Nodes that did deploy keep
+running and are persisted in state, so a re-run reconciles them instead of
+redeploying from scratch. `network upgrade` DOES stop at the first failure:
+`UPGRADE_FAILED`, exit 1, with already-upgraded nodes left on the new
+version unless `--auto-rollback` reverted them.
 
 Every error JSON has the same shape:
 
@@ -109,6 +115,9 @@ Every error JSON has the same shape:
   ]
 }
 ```
+
+Errors may also include optional top-level `artifact_swapped: true` when a new
+artifact was already activated and started but was not rolled back.
 
 Process `suggestions[]` in order. The first entry is the most
 prescriptive and usually fixes the issue automatically; later entries
@@ -293,6 +302,8 @@ done
 trond apply --intent intent-with-snapshot.yaml --auto-approve --wait -o json
 ```
 
+Snapshot download refuses destinations belonging to running or error-state managed nodes (`NODE_RUNNING`); stop the node before writing chain data.
+
 ### `plaintext_transport` — do not skip this
 
 The six mainnet mirrors are bare IPs that publish **no HTTPS endpoint**
@@ -431,7 +442,8 @@ trond network upgrade pn \
   --auto-rollback -o json
 # Output: {"network":"pn","version":"4.8.1","upgraded_count":N,
 #          "upgraded_nodes":[...],"steps":[{node,phase,status,...}],
-#          "status":"success"|"failed","failed_at":"..."?}
+#          "status":"success"|"failed","failed_at":"..."?,
+#          "warnings":[... ]?} (cleanup failures are warnings, not UPGRADE_ERROR)
 
 # 7. Cleanup. --confirm must match the network name (refuses typos).
 trond network destroy pn --confirm pn -o json
@@ -637,7 +649,7 @@ managing a single user's nodes.
 # Block until a probe succeeds (port listen, HTTP endpoint, exec output).
 trond wait <node> --port 8090 --timeout 60s -o json
 trond wait <node> --http "http://127.0.0.1:8090/wallet/getnowblock" \
-  --json '.block_header.raw_data.number > 100' --timeout 5m
+  --json-path block_header.raw_data.number --json-gt 100 --timeout 5m
 
 # Exec arbitrary commands inside a node (docker exec / SSH exec).
 trond exec <node> -- ls /java-tron/output-directory
@@ -987,11 +999,11 @@ the canonical workflow as runnable code.
 ## Versioning of this contract
 
 Every JSON output that carries a `schema_version` field follows
-semantic versioning at the field level: existing fields are stable
-within a major version; additions are minor; renames or removals are
-major. This file is updated alongside any contract change. If you
-write an agent against trond X.Y, pin to that version and re-test on
-upgrade.
+semantic versioning at the field level: additive optional fields on
+existing schemas are patch; new schemas are minor; renames, removals,
+or meaning shifts are major. This file is updated alongside any
+contract change. If you write an agent against trond X.Y, pin to that
+version and re-test on upgrade.
 
 If a JSON output's shape doesn't match what's documented here, that's
 a bug — file an issue with the actual output and the trond version

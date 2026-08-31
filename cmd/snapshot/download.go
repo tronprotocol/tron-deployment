@@ -40,6 +40,8 @@ upstream MD5 sidecar — if the sidecar cannot be fetched the download
 aborts rather than extracting unchecked data, unless you pass
 --no-verify. Also pre-checks free disk space and refuses to overwrite an
 existing database without --force.
+It refuses destinations belonging to running or error-state managed nodes;
+stop the node first, then download.
 
 The default destination is ./output-directory under the current working
 directory — same convention as the official tron-docker tooling. Pass
@@ -92,6 +94,21 @@ func init() {
 func runDownload(cmd *cobra.Command, _ []string) error {
 	outputFmt, _ := cmd.Flags().GetString("output")
 
+	dest := dlDest
+	if dlNode != "" {
+		resolved, err := destFromNode(dlNode)
+		if err != nil {
+			return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
+		}
+		dest = resolved
+	}
+	if dest == "" {
+		dest = "./output-directory"
+	}
+	if err := refuseRunningNodeDestination(dest, dlNode); err != nil {
+		return err
+	}
+
 	src, err := resolveSource(dlDomain, dlNetwork, dlKind, dlRegion, dlEngine)
 	if err != nil {
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
@@ -104,18 +121,6 @@ func runDownload(cmd *cobra.Command, _ []string) error {
 			return output.NewError("LIST_ERROR", output.ExitGeneralError, err.Error())
 		}
 		backup = latest
-	}
-
-	dest := dlDest
-	if dlNode != "" {
-		resolved, err := destFromNode(dlNode)
-		if err != nil {
-			return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
-		}
-		dest = resolved
-	}
-	if dest == "" {
-		dest = "./output-directory"
 	}
 
 	opts := snapshot.DownloadOptions{
@@ -179,6 +184,10 @@ func runDownload(cmd *cobra.Command, _ []string) error {
 
 	res, err := snapshot.Download(cmd.Context(), opts)
 	if err != nil {
+		var running *snapshot.RunningNodeDestinationError
+		if errors.As(err, &running) {
+			return output.NewError("NODE_RUNNING", output.ExitGeneralError, err.Error()).WithSuggestions("Stop the node first: trond stop " + running.NodeName)
+		}
 		var ow *snapshot.OverwriteError
 		if errors.As(err, &ow) {
 			return output.NewError("HUMAN_REQUIRED", output.ExitHumanRequired, ow.Error())
@@ -225,6 +234,22 @@ func runDownload(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "Note: pre-existing userdata/ was preserved.")
 	}
 	return nil
+}
+
+// refuseRunningNodeDestination protects managed node databases from being
+// overwritten while java-tron (jar) or Docker holds them open. --force only
+// controls the ordinary existing-database overwrite prompt; it never bypasses
+// this data-corruption guard.
+func refuseRunningNodeDestination(dest, explicitNode string) error {
+	err := snapshot.RefuseRunningNodeDestination(dest, explicitNode)
+	if err == nil {
+		return nil
+	}
+	var running *snapshot.RunningNodeDestinationError
+	if errors.As(err, &running) {
+		return output.NewError("NODE_RUNNING", output.ExitGeneralError, err.Error()).WithSuggestions("Stop the node first: trond stop " + running.NodeName)
+	}
+	return output.NewError("STATE_ERROR", output.ExitGeneralError, err.Error())
 }
 
 // downloadPayload builds the `-o json` body for a completed foreground

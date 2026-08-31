@@ -598,17 +598,20 @@ func (r Request) validate() error {
 // Intent values override host values on key collision (last writer
 // wins in docker's `-e`). Output is sorted for reproducible argv.
 func allowedEnvPassthrough(intent map[string]string) []string {
-	out := []string{}
+	values := make(map[string]string)
 	for k := range envAllowlist {
 		if v, ok := os.LookupEnv(k); ok {
-			out = append(out, k+"="+v)
+			values[k] = v
 		}
 	}
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, orgGradleProjectPrefix) {
 			continue
 		}
-		out = append(out, e)
+		key, value, ok := strings.Cut(e, "=")
+		if ok {
+			values[key] = value
+		}
 	}
 	keys := make([]string, 0, len(intent))
 	for k := range intent {
@@ -619,7 +622,11 @@ func allowedEnvPassthrough(intent map[string]string) []string {
 		if err := ValidateEnvKey(k); err != nil {
 			continue
 		}
-		out = append(out, k+"="+intent[k])
+		values[k] = intent[k]
+	}
+	out := make([]string, 0, len(values))
+	for k, v := range values {
+		out = append(out, k+"="+v)
 	}
 	sort.Strings(out)
 	return out

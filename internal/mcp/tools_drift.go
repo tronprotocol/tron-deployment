@@ -12,6 +12,7 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // registerDriftTools wires the verify_config tool — the MCP-side
@@ -47,20 +48,15 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 		return errResult(err)
 	}
 
-	store, err := state.NewStore(paths.State())
+	_, _, node, err := state.LoadNode(paths.State(), args.Name)
 	if err != nil {
 		return errResult(err)
 	}
-	st, err := store.Load()
-	if err != nil {
-		return errResult(err)
-	}
-	node := store.GetNode(st, args.Name)
 	if node == nil {
 		return errResult(notFound("verify_config", args.Name))
 	}
 
-	tgt, err := mcpResolveTargetFromNode(node)
+	tgt, err := target.FromManagedNode(node)
 	if err != nil {
 		return errResult(err)
 	}
@@ -76,7 +72,7 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 	}
 
 	// Compare against the REAL bytes so a rotated witness key still
-	// registers as drift; mcpLineDiff redacts every line it emits, so
+	// registers as drift; render.DiffText redacts every line it emits, so
 	// nothing secret leaves over the MCP transport.
 	renderedDesired, err := render.RenderHOCONWithSecrets("", parsed, &parsed.Nodes[0])
 	if err != nil {
@@ -84,7 +80,7 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 	}
 	desired := renderedDesired.Deployable()
 
-	diffs := mcpLineDiff(live, desired, args.Context)
+	diffs := render.DiffText(live, desired, args.Context)
 	return jsonResult(map[string]any{
 		"name":          args.Name,
 		"intent":        parsed.Name,
@@ -95,60 +91,6 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 		"diff_count":    len(diffs),
 		"diffs":         diffs,
 	})
-}
-
-// mcpLineDiff mirrors cmd.lineDiff. Same simplicity rationale — and
-// the same secret handling: comparison on the raw lines, every emitted
-// line (including --context neighbours) through
-// render.RedactWitnessLine. This result is returned to a third-party
-// model provider, so an un-redacted `localwitness` line here is the
-// worst-case disclosure path in the whole tool surface.
-func mcpLineDiff(live, desired string, ctxLines int) []string {
-	a := strings.Split(strings.TrimRight(live, "\n"), "\n")
-	b := strings.Split(strings.TrimRight(desired, "\n"), "\n")
-	var diffs []string
-	maxLen := len(a)
-	if len(b) > maxLen {
-		maxLen = len(b)
-	}
-	// Redact whole-slice: a multi-line `localwitness = [` array keeps its
-	// key on a line that does not itself start with the key name. This
-	// output leaves the machine, so the per-line pass is not enough.
-	aR := render.RedactWitnessLines(a)
-	bR := render.RedactWitnessLines(b)
-	for i := range maxLen {
-		var aLine, bLine string
-		if i < len(a) {
-			aLine = a[i]
-		}
-		if i < len(b) {
-			bLine = b[i]
-		}
-		if aLine == bLine {
-			continue
-		}
-		if ctxLines > 0 {
-			lo := i - ctxLines
-			if lo < 0 {
-				lo = 0
-			}
-			for j := lo; j < i; j++ {
-				if j < len(a) {
-					diffs = append(diffs, "  "+aR[j])
-				}
-			}
-		}
-		switch {
-		case i < len(a) && i >= len(b):
-			diffs = append(diffs, "- "+aR[i])
-		case i >= len(a) && i < len(b):
-			diffs = append(diffs, "+ "+bR[i])
-		default:
-			diffs = append(diffs, "- "+aR[i])
-			diffs = append(diffs, "+ "+bR[i])
-		}
-	}
-	return diffs
 }
 
 func countMCPLines(s string) int {

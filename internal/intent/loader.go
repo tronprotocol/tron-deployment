@@ -1,6 +1,7 @@
 package intent
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
@@ -258,7 +259,9 @@ func Load(path string) (*Intent, error) {
 // Parse parses intent YAML bytes, validates, and applies defaults.
 func Parse(data []byte) (*Intent, error) {
 	var intent Intent
-	if err := yaml.Unmarshal(data, &intent); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&intent); err != nil {
 		return nil, fmt.Errorf("parse intent YAML: %w", err)
 	}
 
@@ -267,7 +270,29 @@ func Parse(data []byte) (*Intent, error) {
 	}
 
 	ApplyDefaults(&intent)
+	if err := ValidateJarRuntime(&intent); err != nil {
+		return nil, err
+	}
 	return &intent, nil
+}
+
+// ValidateJarRuntime rejects the unsupported docker + jar combination after
+// runtime defaults have been resolved. Both local and SSH jar deployments use
+// target.runtime=jar; target.type does not change that runtime value.
+func ValidateJarRuntime(intent *Intent) error {
+	rt := intent.Target.Runtime
+	if rt == "" {
+		rt = DefaultRuntime(intent)
+	}
+	if rt != "docker" {
+		return nil
+	}
+	for i, node := range intent.Nodes {
+		if node.Jar != nil {
+			return fmt.Errorf("nodes[%d]: jar source requires target.runtime=jar; docker runtime cannot consume jar — set target.runtime: jar", i)
+		}
+	}
+	return nil
 }
 
 // ParseRaw returns the parsed Intent with defaults NOT applied. Used by
@@ -275,7 +300,9 @@ func Parse(data []byte) (*Intent, error) {
 // defaults at the field level.
 func ParseRaw(data []byte) (*Intent, error) {
 	var intent Intent
-	if err := yaml.Unmarshal(data, &intent); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&intent); err != nil {
 		return nil, fmt.Errorf("parse intent YAML: %w", err)
 	}
 	return &intent, nil

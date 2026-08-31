@@ -107,7 +107,8 @@ func IsWitnessKeyLine(line string) bool {
 	if !ok {
 		return false
 	}
-	return strings.HasPrefix(strings.TrimLeft(rest, " \t"), "=")
+	separator := strings.TrimLeft(rest, " \t")
+	return strings.HasPrefix(separator, "=") || strings.HasPrefix(separator, ":")
 }
 
 // RedactWitnessLine returns line unchanged unless it is a witness
@@ -320,6 +321,9 @@ func RenderHOCONWithSecrets(templateDir string, i *intent.Intent, node *intent.N
 	config := string(data)
 
 	// 1. Targeted line-level rewrites.
+	if node.Ports.SolidityGRPC != 0 && !hasHOCONBlock(config, "rpc") {
+		return Rendered{}, fmt.Errorf("cannot render ports.solidity_grpc: rpc block not found")
+	}
 	config = applyPortOverrides(config, node)
 	config = applyFeatureOverrides(config, node)
 	if err := checkHTTPPortConflicts(config, node); err != nil {
@@ -355,17 +359,9 @@ func ValidateIntentHTTPPortConflicts(templateDir string, parsed, raw *intent.Int
 	if raw.Target.AutoPorts {
 		return nil
 	}
-	data, err := LoadTemplate(templateDir, parsed.Network)
-	if err != nil {
-		return err
-	}
-	for idx := range raw.Nodes {
-		if raw.Nodes[idx].Ports.HTTP == 0 {
-			continue
-		}
-		node := parsed.Nodes[idx]
-		config := applyPortOverrides(string(data), &node)
-		if err := checkHTTPPortConflicts(config, &node); err != nil {
+	for idx := range parsed.Nodes {
+		node := &parsed.Nodes[idx]
+		if _, err := RenderHOCONWithSecrets(templateDir, parsed, node); err != nil {
 			return err
 		}
 	}
@@ -594,6 +590,9 @@ func applyPortOverrides(config string, node *intent.NodeSpec) string {
 	if ports.GRPC != 0 {
 		config = replaceRPCPort(config, ports.GRPC)
 	}
+	if ports.SolidityGRPC != 0 {
+		config = replaceSolidityGRPCPort(config, ports.SolidityGRPC)
+	}
 	if ports.SolidityHTTP != 0 {
 		config = replaceHOCONValue(config, "solidityPort", fmt.Sprintf("%d", ports.SolidityHTTP))
 	}
@@ -637,6 +636,9 @@ func checkHTTPPortConflicts(config string, node *intent.NodeSpec) error {
 	}
 	if pbftOK && full == pbft && !hasHTTPOverride(node, "PBFTPort") {
 		return fmt.Errorf("rendered HTTP port conflict: fullNodePort=%d collides with PBFTPort (in-container). Set config_overrides \"node.http.PBFTPort\" to a different port", full)
+	}
+	if solidityOK && pbftOK && solidity == pbft && !hasHTTPOverride(node, "solidityPort") && !hasHTTPOverride(node, "PBFTPort") {
+		return fmt.Errorf("rendered HTTP port conflict: solidityPort=%d collides with PBFTPort; set a different ports.solidity_http or config_overrides value", solidity)
 	}
 	return nil
 }
@@ -718,6 +720,44 @@ func replaceRPCPort(config string, port int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func replaceSolidityGRPCPort(config string, port int) string {
+	lines := strings.Split(config, "\n")
+	inRPC := false
+	depth := 0
+	rpcDepth := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inRPC && strings.HasPrefix(trimmed, "rpc") && strings.Contains(trimmed, "{") {
+			inRPC = true
+			rpcDepth = depth + strings.Count(line, "{") - strings.Count(line, "}")
+			continue
+		}
+		if inRPC {
+			key := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+			if strings.HasPrefix(key, "solidityPort") {
+				lines[i] = fmt.Sprintf("%ssolidityPort = %d", lineIndent(line), port)
+				return strings.Join(lines, "\n")
+			}
+			if trimmed == "}" && depth+strings.Count(line, "{")-strings.Count(line, "}") < rpcDepth {
+				lines = append(lines[:i], append([]string{"  solidityPort = " + fmt.Sprintf("%d", port)}, lines[i:]...)...)
+				return strings.Join(lines, "\n")
+			}
+		}
+		depth += strings.Count(line, "{") - strings.Count(line, "}")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func hasHOCONBlock(config, name string) bool {
+	for _, line := range strings.Split(config, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, name) && strings.Contains(trimmed, "{") {
+			return true
+		}
+	}
+	return false
 }
 
 // replaceListenPort replaces the P2P listen port.
